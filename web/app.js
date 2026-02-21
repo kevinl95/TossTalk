@@ -5,6 +5,10 @@ const STATE_CHAR_UUID = '9f8d0004-6b7b-4f26-b10f-3aa861aa0001';
 
 const AUDIO_CODEC_PCM16 = 0;
 const AUDIO_CODEC_IMA_ADPCM = 1;
+const FRAME_MS = 20;
+const TARGET_BUFFER_FRAMES = 4;
+const MAX_BUFFER_FRAMES = 24;
+const MAX_CONCEAL_FRAMES_PER_GAP = 8;
 
 const ADPCM_INDEX_TABLE = [-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8];
 const ADPCM_STEP_TABLE = [
@@ -27,6 +31,8 @@ const battery = document.getElementById('battery');
 const frameCountEl = document.getElementById('frameCount');
 const dropCountEl = document.getElementById('dropCount');
 const mutedCountEl = document.getElementById('mutedCount');
+const concealedCountEl = document.getElementById('concealedCount');
+const bufferDepthEl = document.getElementById('bufferDepth');
 const logs = document.getElementById('logs');
 
 let audioContext;
@@ -35,17 +41,28 @@ let bleDevice = null;
 let reconnectTimer = null;
 let lastSeq = null;
 let disconnectBound = false;
+let jitterTimer = null;
+let expectedSeq = null;
+let playoutStarted = false;
+let streamSampleRate = 8000;
+let streamSampleCount = 160;
+let lastGoodFrame = null;
+
+const jitterQueue = [];
 
 const stats = {
   frames: 0,
   drops: 0,
   mutedFrames: 0,
+  concealedFrames: 0,
 };
 
 function updateStatsUi() {
   frameCountEl.textContent = String(stats.frames);
   dropCountEl.textContent = String(stats.drops);
   mutedCountEl.textContent = String(stats.mutedFrames);
+  concealedCountEl.textContent = String(stats.concealedFrames);
+  bufferDepthEl.textContent = String(jitterQueue.length);
 }
 
 function log(message) {
@@ -118,6 +135,64 @@ function playPcm16Samples(sampleRate, int16) {
   scheduleAt += buffer.duration;
 }
 
+function resetAudioPipeline() {
+  jitterQueue.length = 0;
+  expectedSeq = null;
+  playoutStarted = false;
+  lastGoodFrame = null;
+  updateStatsUi();
+}
+
+function makeConcealmentFrame(sampleCount) {
+  const out = new Int16Array(sampleCount);
+  if (!lastGoodFrame || lastGoodFrame.length !== sampleCount) {
+    return out;
+  }
+
+  for (let i = 0; i < sampleCount; i++) {
+    out[i] = (lastGoodFrame[i] * 7) >> 3;
+  }
+  return out;
+}
+
+function enqueueFrame(sampleRate, sampleCount, frame) {
+  streamSampleRate = sampleRate;
+  streamSampleCount = sampleCount;
+
+  if (jitterQueue.length >= MAX_BUFFER_FRAMES) {
+    jitterQueue.shift();
+    stats.drops += 1;
+  }
+
+  jitterQueue.push(frame);
+  updateStatsUi();
+}
+
+function ensurePlayoutLoop() {
+  if (jitterTimer) return;
+
+  jitterTimer = setInterval(() => {
+    ensureAudio();
+
+    if (!playoutStarted) {
+      if (jitterQueue.length < TARGET_BUFFER_FRAMES) {
+        return;
+      }
+      playoutStarted = true;
+      scheduleAt = Math.max(scheduleAt, audioContext.currentTime + 0.04);
+    }
+
+    let frame = jitterQueue.shift();
+    if (!frame) {
+      frame = makeConcealmentFrame(streamSampleCount);
+      stats.concealedFrames += 1;
+    }
+
+    playPcm16Samples(streamSampleRate, frame);
+    updateStatsUi();
+  }, FRAME_MS);
+}
+
 function decodeImaAdpcm(data, sampleCount, predictor, index) {
   const out = new Int16Array(sampleCount);
   let pred = predictor;
@@ -162,6 +237,8 @@ function handleAudioFrame(event) {
   const codec = dv.getUint8(6);
   const payload = new Uint8Array(dv.buffer, dv.byteOffset + 8, dv.byteLength - 8);
 
+  ensurePlayoutLoop();
+
   if (lastSeq !== null) {
     const delta = (seq - lastSeq + 65536) % 65536;
     if (delta > 1) {
@@ -171,8 +248,23 @@ function handleAudioFrame(event) {
   lastSeq = seq;
   stats.frames += 1;
 
+  if (expectedSeq === null) {
+    expectedSeq = seq;
+  }
+
+  const seqGap = (seq - expectedSeq + 65536) % 65536;
+  if (seqGap > 0 && seqGap < 1000) {
+    const conceal = Math.min(seqGap, MAX_CONCEAL_FRAMES_PER_GAP);
+    for (let i = 0; i < conceal; i++) {
+      enqueueFrame(sampleRate, sampleCount, makeConcealmentFrame(sampleCount));
+      stats.concealedFrames += 1;
+    }
+  }
+  expectedSeq = (seq + 1) & 0xffff;
+
   if (flags & 0x01) {
     stats.mutedFrames += 1;
+    enqueueFrame(sampleRate, sampleCount, new Int16Array(sampleCount));
     updateStatsUi();
     return;
   }
@@ -184,10 +276,18 @@ function handleAudioFrame(event) {
       const index = dv.getUint8(10);
       const adpcm = new Uint8Array(dv.buffer, headerOffset + 4, dv.byteLength - 12);
       const pcm = decodeImaAdpcm(adpcm, sampleCount, predictor, index);
-      playPcm16Samples(sampleRate, pcm);
+      lastGoodFrame = pcm;
+      enqueueFrame(sampleRate, sampleCount, pcm);
     }
   } else if (codec === AUDIO_CODEC_PCM16 && payload.byteLength >= sampleCount * 2) {
-    playPcm16(sampleRate, payload);
+    const pcm = new Int16Array(payload.buffer, payload.byteOffset, sampleCount);
+    const cloned = new Int16Array(sampleCount);
+    cloned.set(pcm);
+    lastGoodFrame = cloned;
+    enqueueFrame(sampleRate, sampleCount, cloned);
+  } else {
+    enqueueFrame(sampleRate, sampleCount, makeConcealmentFrame(sampleCount));
+    stats.concealedFrames += 1;
   }
 
   updateStatsUi();
@@ -229,12 +329,14 @@ async function connectBle() {
     device.addEventListener('gattserverdisconnected', () => {
       connState.textContent = 'Disconnected';
       log('BLE disconnected');
+      resetAudioPipeline();
       scheduleReconnect();
     });
     disconnectBound = true;
   }
 
   const server = await device.gatt.connect();
+  resetAudioPipeline();
   const service = await server.getPrimaryService(SERVICE_UUID);
 
   const audioChar = await service.getCharacteristic(AUDIO_CHAR_UUID);

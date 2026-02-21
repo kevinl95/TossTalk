@@ -13,6 +13,7 @@ Throwable classroom microphone prototype for M5StickC Plus2.
 - ✅ Web Serial flashing page stub (Chromium-only path)
 - ✅ Initial microphone capture over BLE frames (8 kHz PCM)
 - ✅ IMA ADPCM codec path (firmware encode + web decode)
+- ✅ Web jitter buffer + packet-loss concealment (PLC)
 - 🚧 Near-live BLE audio quality tuning and robust IMU thresholds
 
 ## Product constraints
