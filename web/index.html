@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#111827" />
+    <title>TossTalk</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h1>TossTalk</h1>
+      <p class="sub">Tossable Microphone Control</p>
+
+      <section class="panel">
+        <button id="connectBtn">Connect TossTalk</button>
+        <button id="flashBtn">Flash Firmware</button>
+      </section>
+
+      <section class="panel grid">
+        <div>
+          <h2>Connection</h2>
+          <p id="connState">Disconnected</p>
+        </div>
+        <div>
+          <h2>Audio Gate</h2>
+          <p id="gateState">Unknown</p>
+        </div>
+        <div>
+          <h2>Battery</h2>
+          <p id="battery">--%</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Logs</h2>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
