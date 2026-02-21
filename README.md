@@ -1,46 +1,64 @@
 # TossTalk
 
-Throwable classroom microphone prototype for M5StickC Plus2.
+TossTalk is a throwable classroom microphone prototype built for the M5StickC Plus2.
 
-## Current implementation status (M0/M1 bootstrap)
+The goal is simple: teachers can turn it on, pair once, and use it like a pass-around classroom mic without extra setup.
 
-- ✅ Repository scaffold for firmware + web app + CI
-- ✅ Always-on interaction model (no push-to-talk)
-- ✅ Battery HUD requirement captured and started in firmware loop
-- ✅ BLE protocol UUIDs defined and wired in firmware/web stubs
-- ✅ PWA shell for desktop Chromium with Web Bluetooth connect flow
-- ✅ Auto-reconnect and stream stats in web console
-- ✅ Web Serial flashing page stub (Chromium-only path)
-- ✅ Initial microphone capture over BLE frames (8 kHz PCM)
-- ✅ IMA ADPCM codec path (firmware encode + web decode)
-- ✅ Web jitter buffer + packet-loss concealment (PLC)
-- 🚧 Near-live BLE audio quality tuning and robust IMU thresholds
+## What it does
 
-## Product constraints
+- Detects when the device is in the air and mutes throw noise
+- Recovers quickly so students can speak right away after a catch
+- Streams audio to a web app over BLE
+- Plays audio through the teacher's connected speakers
+- Shows remaining battery on the device screen
+- Supports browser-based firmware updates (no Arduino IDE required)
 
-- No teacher interaction required after power + pairing
-- Auto-recover behavior (no teacher warning workflow)
-- Desktop Chromium target (Windows/ChromeOS/macOS)
-- Battery percentage visible on device screen at all times
+## Teacher workflow
 
-## Repo layout
+1. Power on TossTalk
+2. Open the TossTalk web page in Chrome or Edge (desktop)
+3. Connect device
+4. Start class and pass/throw the mic
 
-- [firmware](firmware): PlatformIO firmware for M5StickC Plus2
-- [web](web): Static PWA (GitHub Pages deploy target)
-- [docs](docs): Architecture, protocol, milestones, and test plan
-- [.github/workflows](.github/workflows): CI/CD pipelines
+No in-class troubleshooting UI is required for normal use; recovery is automatic.
 
-## Quick start
+## Firmware updates (teacher-friendly path)
 
-### Firmware
+The web app includes a Flash Firmware button that uses Web Serial in Chromium browsers.
+
+By default, it flashes a prebuilt merged image hosted with the site:
+
+- [web/firmware/tosstalk-merged.bin](web/firmware/tosstalk-merged.bin)
+
+This file is generated automatically by GitHub Actions during deployment.
+
+## Browser support
+
+- Target: Desktop Chromium browsers (Chrome, Edge)
+- Mobile browsers: not currently in scope
+
+## Project structure
+
+- [firmware](firmware): Device firmware (PlatformIO)
+- [web](web): Browser app (PWA + Web Bluetooth + Web Serial flashing)
+- [docs](docs): Architecture, protocol, milestones, test notes
+- [.github/workflows](.github/workflows): Build and deployment automation
+
+## For developers
+
+### Local firmware build
 
 1. Open [firmware/platformio.ini](firmware/platformio.ini)
-2. Build/upload with PlatformIO (local dev)
+2. Build/upload with PlatformIO
 
-### Web app (local)
+### Local web testing
 
-Serve [web](web) with any static server and open in Chromium.
+Serve [web](web) with any static server and open in desktop Chromium.
 
-### Deploy
+### Deployment
 
-Push to `main`; GitHub Actions deploys [web](web) to Pages.
+Push to `main` to:
+
+- deploy the web app to GitHub Pages
+- build firmware
+- publish updated merged firmware for browser flashing

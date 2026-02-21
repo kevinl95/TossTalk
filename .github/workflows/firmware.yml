@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - 'firmware/**'
+      - 'scripts/**'
       - '.github/workflows/firmware.yml'
   pull_request:
     paths:
       - 'firmware/**'
+      - 'scripts/**'
       - '.github/workflows/firmware.yml'
   workflow_dispatch:
 
@@ -27,7 +29,23 @@ jobs:
           python-version: '3.11'
 
       - name: Install PlatformIO
-        run: pip install platformio
+        run: pip install platformio esptool
 
       - name: Build firmware
         run: pio run
+
+      - name: Merge firmware image
+        run: |
+          python ../scripts/merge_firmware.py \
+            --env-dir .pio/build/m5stick-c-plus2 \
+            --out .pio/build/m5stick-c-plus2/tosstalk-merged.bin
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-binaries
+          path: |
+            firmware/.pio/build/m5stick-c-plus2/firmware.bin
+            firmware/.pio/build/m5stick-c-plus2/bootloader.bin
+            firmware/.pio/build/m5stick-c-plus2/partitions.bin
+            firmware/.pio/build/m5stick-c-plus2/tosstalk-merged.bin

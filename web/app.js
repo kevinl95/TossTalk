@@ -28,6 +28,12 @@ const flashBtn = document.getElementById('flashBtn');
 const connState = document.getElementById('connState');
 const gateState = document.getElementById('gateState');
 const battery = document.getElementById('battery');
+const firmwareUrlInput = document.getElementById('firmwareUrl');
+const firmwareFileInput = document.getElementById('firmwareFile');
+const flashAddressInput = document.getElementById('flashAddress');
+const eraseAllInput = document.getElementById('eraseAll');
+const flashProgress = document.getElementById('flashProgress');
+const flashStatus = document.getElementById('flashStatus');
 const frameCountEl = document.getElementById('frameCount');
 const dropCountEl = document.getElementById('dropCount');
 const mutedCountEl = document.getElementById('mutedCount');
@@ -50,6 +56,14 @@ let lastGoodFrame = null;
 
 const jitterQueue = [];
 
+const ESPTOOL_IMPORT_URLS = [
+  'https://cdn.jsdelivr.net/npm/esptool-js@0.5.6/lib/index.js',
+  'https://unpkg.com/esptool-js@0.5.6/lib/index.js',
+];
+const DEFAULT_FIRMWARE_URL = './firmware/tosstalk-merged.bin';
+
+let esptoolModule = null;
+
 const stats = {
   frames: 0,
   drops: 0,
@@ -68,6 +82,55 @@ function updateStatsUi() {
 function log(message) {
   const time = new Date().toLocaleTimeString();
   logs.textContent = `[${time}] ${message}\n` + logs.textContent;
+}
+
+function setFlashStatus(text) {
+  flashStatus.textContent = text;
+  log(`FLASH: ${text}`);
+}
+
+function parseAddress(value) {
+  const input = value.trim().toLowerCase();
+  if (input.startsWith('0x')) return Number.parseInt(input.slice(2), 16);
+  return Number.parseInt(input, 10);
+}
+
+async function loadEsptoolModule() {
+  if (esptoolModule) return esptoolModule;
+
+  let lastError = null;
+  for (const url of ESPTOOL_IMPORT_URLS) {
+    try {
+      esptoolModule = await import(url);
+      return esptoolModule;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw new Error(`Unable to load esptool-js module: ${lastError?.message || 'unknown error'}`);
+}
+
+async function loadFirmwareImage() {
+  const chosenFile = firmwareFileInput.files?.[0];
+  const firmwareUrl = (firmwareUrlInput.value.trim() || DEFAULT_FIRMWARE_URL);
+
+  if (chosenFile) {
+    const arrayBuffer = await chosenFile.arrayBuffer();
+    return {
+      name: chosenFile.name,
+      data: new Uint8Array(arrayBuffer),
+    };
+  }
+
+  const response = await fetch(firmwareUrl, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch firmware URL (${response.status})`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  return {
+    name: firmwareUrl,
+    data: new Uint8Array(arrayBuffer),
+  };
 }
 
 function gateName(v) {
@@ -391,18 +454,94 @@ async function startFlashFlow() {
     return;
   }
 
-  // Bootstrap only. Full esptool-js integration lands in next milestone.
-  const port = await navigator.serial.requestPort();
-  await port.open({ baudRate: 115200 });
-  const info = port.getInfo();
-  log(`Serial port opened VID=${info.usbVendorId || 0} PID=${info.usbProductId || 0}`);
-  log('Flashing data transfer integration is the next step (esptool-js).');
-  await port.close();
+  flashBtn.disabled = true;
+  flashProgress.value = 0;
+
+  let transport = null;
+  try {
+    setFlashStatus('Loading esptool-js...');
+    const { ESPLoader, Transport } = await loadEsptoolModule();
+
+    setFlashStatus('Reading firmware image...');
+    const firmware = await loadFirmwareImage();
+    const flashAddress = parseAddress(flashAddressInput.value);
+    if (!Number.isFinite(flashAddress) || flashAddress < 0) {
+      throw new Error('Invalid flash address. Use decimal or hex (for example 0x0).');
+    }
+
+    setFlashStatus('Select ESP serial port...');
+    const port = await navigator.serial.requestPort({});
+
+    const terminalAdapter = {
+      clean() {
+        return;
+      },
+      writeLine(data) {
+        log(String(data));
+      },
+      write(data) {
+        log(String(data));
+      },
+    };
+
+    transport = new Transport(port, false);
+    const loader = new ESPLoader({
+      transport,
+      baudrate: 115200,
+      terminal: terminalAdapter,
+      debugLogging: false,
+    });
+
+    setFlashStatus('Connecting to chip...');
+    const chip = await loader.main('default_reset');
+    log(`Connected to chip: ${chip}`);
+
+    try {
+      setFlashStatus('Uploading flasher stub...');
+      await loader.runStub();
+    } catch (err) {
+      log(`Stub upload skipped: ${err.message}`);
+    }
+
+    setFlashStatus('Writing firmware...');
+    await loader.writeFlash({
+      fileArray: [{ address: flashAddress, data: firmware.data }],
+      flashMode: 'keep',
+      flashFreq: 'keep',
+      flashSize: 'keep',
+      eraseAll: Boolean(eraseAllInput.checked),
+      compress: true,
+      reportProgress: (_fileIndex, written, total) => {
+        const pct = total > 0 ? Math.round((written / total) * 100) : 0;
+        flashProgress.value = pct;
+        flashStatus.textContent = `Flashing ${pct}%`;
+      },
+    });
+
+    setFlashStatus('Finalizing and rebooting...');
+    await loader.after('hard_reset');
+    setFlashStatus(`Flash successful: ${firmware.name}`);
+  } catch (err) {
+    setFlashStatus(`Flash failed: ${err.message}`);
+    throw err;
+  } finally {
+    flashBtn.disabled = false;
+    if (transport) {
+      try {
+        await transport.disconnect();
+      } catch {
+        // Ignore disconnect cleanup errors.
+      }
+    }
+  }
 }
 
 connectBtn.addEventListener('click', () => connectBle().catch((err) => log(`Connect error: ${err.message}`)));
 flashBtn.addEventListener('click', () => startFlashFlow().catch((err) => log(`Flash error: ${err.message}`)));
 updateStatsUi();
+if (!firmwareUrlInput.value.trim()) {
+  firmwareUrlInput.value = DEFAULT_FIRMWARE_URL;
+}
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

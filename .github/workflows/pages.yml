@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'web/**'
+      - 'firmware/**'
+      - 'scripts/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -25,6 +27,43 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: pip install platformio esptool
+
+      - name: Build firmware
+        run: pio run -d firmware
+
+      - name: Merge firmware image for web flashing
+        run: |
+          python scripts/merge_firmware.py \
+            --env-dir firmware/.pio/build/m5stick-c-plus2 \
+            --out web/firmware/tosstalk-merged.bin
+
+      - name: Write firmware metadata
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          from datetime import datetime, timezone
+
+          fw = pathlib.Path('web/firmware/tosstalk-merged.bin')
+          digest = hashlib.sha256(fw.read_bytes()).hexdigest()
+          meta = {
+              'file': fw.name,
+              'sha256': digest,
+              'size': fw.stat().st_size,
+              'generatedAtUtc': datetime.now(timezone.utc).isoformat(),
+          }
+          pathlib.Path('web/firmware').mkdir(parents=True, exist_ok=True)
+          pathlib.Path('web/firmware/manifest.json').write_text(json.dumps(meta, indent=2) + '\n')
+          PY
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

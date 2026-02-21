@@ -53,6 +53,38 @@ button {
   cursor: pointer;
 }
 
+input[type='text'],
+input[type='file'] {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid #374151;
+  background: #0f172a;
+  color: #e5e7eb;
+  border-radius: 8px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.flash-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.checkline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+progress {
+  width: 100%;
+  margin-top: 12px;
+  height: 10px;
+}
+
 button:hover {
   filter: brightness(1.06);
 }
@@ -67,6 +99,10 @@ button:hover {
 
 @media (max-width: 740px) {
   .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .flash-grid {
     grid-template-columns: 1fr;
   }
 }
