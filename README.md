@@ -9,6 +9,7 @@ Throwable classroom microphone prototype for M5StickC Plus2.
 - ✅ Battery HUD requirement captured and started in firmware loop
 - ✅ BLE protocol UUIDs defined and wired in firmware/web stubs
 - ✅ PWA shell for desktop Chromium with Web Bluetooth connect flow
+- ✅ Auto-reconnect and stream stats in web console
 - ✅ Web Serial flashing page stub (Chromium-only path)
 - 🚧 Near-live BLE audio quality tuning and robust IMU thresholds
 

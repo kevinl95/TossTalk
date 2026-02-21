@@ -8,10 +8,29 @@ const flashBtn = document.getElementById('flashBtn');
 const connState = document.getElementById('connState');
 const gateState = document.getElementById('gateState');
 const battery = document.getElementById('battery');
+const frameCountEl = document.getElementById('frameCount');
+const dropCountEl = document.getElementById('dropCount');
+const mutedCountEl = document.getElementById('mutedCount');
 const logs = document.getElementById('logs');
 
 let audioContext;
 let scheduleAt = 0;
+let bleDevice = null;
+let reconnectTimer = null;
+let lastSeq = null;
+let disconnectBound = false;
+
+const stats = {
+  frames: 0,
+  drops: 0,
+  mutedFrames: 0,
+};
+
+function updateStatsUi() {
+  frameCountEl.textContent = String(stats.frames);
+  dropCountEl.textContent = String(stats.drops);
+  mutedCountEl.textContent = String(stats.mutedFrames);
+}
 
 function log(message) {
   const time = new Date().toLocaleTimeString();
@@ -72,13 +91,26 @@ function handleAudioFrame(event) {
   const flags = dv.getUint8(5);
   const payload = new Uint8Array(dv.buffer, dv.byteOffset + 6, dv.byteLength - 6);
 
+  if (lastSeq !== null) {
+    const delta = (seq - lastSeq + 65536) % 65536;
+    if (delta > 1) {
+      stats.drops += delta - 1;
+    }
+  }
+  lastSeq = seq;
+  stats.frames += 1;
+
   if (flags & 0x01) {
+    stats.mutedFrames += 1;
+    updateStatsUi();
     return;
   }
 
   if (payload.byteLength >= sampleCount * 2) {
     playPcm16(sampleRate, payload);
   }
+
+  updateStatsUi();
 
   if (seq % 50 === 0) {
     log(`Audio seq=${seq} sr=${sampleRate} samples=${sampleCount}`);
@@ -107,15 +139,20 @@ async function connectBle() {
   }
 
   connState.textContent = 'Selecting device...';
-  const device = await navigator.bluetooth.requestDevice({
+  const device = bleDevice || (await navigator.bluetooth.requestDevice({
     filters: [{ services: [SERVICE_UUID] }],
     optionalServices: [SERVICE_UUID],
-  });
+  }));
+  bleDevice = device;
 
-  device.addEventListener('gattserverdisconnected', () => {
-    connState.textContent = 'Disconnected';
-    log('BLE disconnected');
-  });
+  if (!disconnectBound) {
+    device.addEventListener('gattserverdisconnected', () => {
+      connState.textContent = 'Disconnected';
+      log('BLE disconnected');
+      scheduleReconnect();
+    });
+    disconnectBound = true;
+  }
 
   const server = await device.gatt.connect();
   const service = await server.getPrimaryService(SERVICE_UUID);
@@ -139,8 +176,31 @@ async function connectBle() {
   const stateNow = await stateChar.readValue();
   handleState({ target: { value: stateNow } });
 
+  clearReconnect();
   connState.textContent = `Connected: ${device.name || 'TossTalk'}`;
   log('BLE connected and notifications active');
+}
+
+function clearReconnect() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function scheduleReconnect() {
+  if (!bleDevice || reconnectTimer) return;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    try {
+      connState.textContent = 'Reconnecting...';
+      await connectBle();
+      log('BLE auto-reconnect success');
+    } catch (err) {
+      log(`BLE auto-reconnect failed: ${err.message}`);
+      scheduleReconnect();
+    }
+  }, 1500);
 }
 
 async function startFlashFlow() {
@@ -152,12 +212,15 @@ async function startFlashFlow() {
   // Bootstrap only. Full esptool-js integration lands in next milestone.
   const port = await navigator.serial.requestPort();
   await port.open({ baudRate: 115200 });
-  log('Serial port opened. Flashing integration TODO (M2).');
+  const info = port.getInfo();
+  log(`Serial port opened VID=${info.usbVendorId || 0} PID=${info.usbProductId || 0}`);
+  log('Flashing data transfer integration is the next step (esptool-js).');
   await port.close();
 }
 
 connectBtn.addEventListener('click', () => connectBle().catch((err) => log(`Connect error: ${err.message}`)));
 flashBtn.addEventListener('click', () => startFlashFlow().catch((err) => log(`Flash error: ${err.message}`)));
+updateStatsUi();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
