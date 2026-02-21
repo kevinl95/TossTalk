@@ -75,6 +75,10 @@ bool lastCharging = false;
 
 void notifyGateState();
 
+bool canNotify(NimBLECharacteristic* ch) {
+  return bleClientConnected && ch != nullptr && ch->getSubscribedCount() > 0;
+}
+
 const char* gateStateName(GateState s) {
   switch (s) {
     case GateState::UnmutedLive:
@@ -142,7 +146,9 @@ float readAccelMagnitudeG() {
 void notifyGateState() {
   uint8_t payload[2] = {static_cast<uint8_t>(gateState), 0};
   stateChar->setValue(payload, sizeof(payload));
-  stateChar->notify();
+  if (canNotify(stateChar)) {
+    stateChar->notify();
+  }
 }
 
 void updateGateState() {
@@ -221,7 +227,9 @@ void updateBattery() {
 
     uint8_t payload[2] = {percent, static_cast<uint8_t>(charging ? 1 : 0)};
     batteryChar->setValue(payload, sizeof(payload));
-    batteryChar->notify();
+    if (canNotify(batteryChar)) {
+      batteryChar->notify();
+    }
   }
 }
 
@@ -303,6 +311,10 @@ bool popMicFrame(int16_t* outSamples) {
 }
 
 void sendMicAudioFrame() {
+  if (!canNotify(audioChar)) {
+    return;
+  }
+
   const uint32_t now = millis();
   if (now - lastAudioTickMs < 20) return;
   lastAudioTickMs = now;
