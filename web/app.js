@@ -57,8 +57,9 @@ let lastGoodFrame = null;
 const jitterQueue = [];
 
 const ESPTOOL_IMPORT_URLS = [
-  'https://cdn.jsdelivr.net/npm/esptool-js@0.5.6/lib/index.js',
-  'https://unpkg.com/esptool-js@0.5.6/lib/index.js',
+  'https://esm.sh/esptool-js@0.5.6?bundle',
+  'https://esm.sh/esptool-js@0.5.6',
+  'https://cdn.skypack.dev/esptool-js@0.5.6',
 ];
 const DEFAULT_FIRMWARE_URL = './firmware/tosstalk-merged.bin';
 
