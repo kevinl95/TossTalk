@@ -107,6 +107,14 @@ function parseAddress(value) {
   return Number.parseInt(input, 10);
 }
 
+function padTo4Bytes(u8) {
+  const rem = u8.length % 4;
+  if (rem === 0) return u8;
+  const out = new Uint8Array(u8.length + (4 - rem));
+  out.set(u8);
+  return out;
+}
+
 async function loadEsptoolModule() {
   if (esptoolModule) return esptoolModule;
 
@@ -509,21 +517,34 @@ async function startFlashFlow() {
     log(`Connected to chip: ${chip}`);
 
     setFlashStatus('Writing firmware...');
-    await loader.writeFlash({
-      fileArray: [{ address: flashAddress, data: firmware.data }],
-      flashMode: 'keep',
-      flashFreq: 'keep',
-      flashSize: 'keep',
-      eraseAll: Boolean(eraseAllInput.checked),
-      // Some browser/CDN builds of esptool-js can fail in compressed mode.
-      // Keep this off for reliability in classroom flows.
-      compress: false,
-      reportProgress: (_fileIndex, written, total) => {
-        const pct = total > 0 ? Math.round((written / total) * 100) : 0;
-        flashProgress.value = pct;
-        flashStatus.textContent = `Flashing ${pct}%`;
-      },
-    });
+    let image = padTo4Bytes(firmware.data);
+
+    if (Boolean(eraseAllInput.checked) && loader.IS_STUB) {
+      setFlashStatus('Erasing flash...');
+      await loader.eraseFlash();
+    }
+
+    const blockSize = loader.FLASH_WRITE_SIZE || 0x4000;
+    const blocks = await loader.flashBegin(image.length, flashAddress);
+    let offset = 0;
+
+    for (let seq = 0; seq < blocks; seq++) {
+      const end = Math.min(offset + blockSize, image.length);
+      const block = image.slice(offset, end);
+      const timeout = Math.max(
+        3000,
+        loader.timeoutPerMb(loader.ERASE_WRITE_TIMEOUT_PER_MB, Math.max(1, block.length))
+      );
+
+      await loader.flashBlock(block, seq, timeout);
+      offset = end;
+
+      const pct = image.length > 0 ? Math.round((offset / image.length) * 100) : 100;
+      flashProgress.value = pct;
+      flashStatus.textContent = `Flashing ${pct}%`;
+    }
+
+    await loader.flashFinish(false);
 
     setFlashStatus('Finalizing and rebooting...');
     await loader.after('hard_reset');

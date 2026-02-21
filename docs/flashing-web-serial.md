@@ -20,6 +20,8 @@ Notes:
 
 - Flashing uses reliability-first settings in browser flow (`compress: false`).
 - Stub handling is left to the loader connection flow to avoid duplicate-stub issues.
+- Browser flow writes firmware using `flashBegin` / `flashBlock` / `flashFinish` APIs
+	instead of the high-level `writeFlash` helper for better compatibility.
 
 ## Firmware input expectations
 
