@@ -1,5 +1,5 @@
-const CACHE_NAME = 'tosstalk-v2';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest'];
+const CACHE_NAME = 'tosstalk-v3';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './favicon.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));

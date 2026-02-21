@@ -47,6 +47,7 @@ let bleDevice = null;
 let reconnectTimer = null;
 let lastSeq = null;
 let disconnectBound = false;
+let isConnecting = false;
 let jitterTimer = null;
 let expectedSeq = null;
 let playoutStarted = false;
@@ -457,7 +458,13 @@ function handleState(event) {
 }
 
 async function connectBle() {
+  if (isConnecting) {
+    log('Connect already in progress');
+    return;
+  }
+
   let server = null;
+  isConnecting = true;
   try {
     if (!('bluetooth' in navigator)) {
       const msg = getBluetoothUnavailableMessage();
@@ -485,29 +492,60 @@ async function connectBle() {
         log('BLE disconnected');
         resetAudioPipeline();
         clearNoAudioMonitor();
-        scheduleReconnect();
+        if (!isConnecting) {
+          scheduleReconnect();
+        }
       });
       disconnectBound = true;
     }
 
-    server = await withTimeout(device.gatt.connect(), 15000, 'GATT connect');
-    resetAudioPipeline();
-
-    connState.textContent = 'Resolving service...';
     let service = null;
-    try {
-      service = await withTimeout(server.getPrimaryService(SERVICE_UUID), 20000, 'Primary service');
-    } catch (primaryErr) {
-      log(`Primary service lookup failed: ${formatError(primaryErr)}`);
-      // Fallback: enumerate all primary services and find our UUID.
-      const services = await withTimeout(server.getPrimaryServices(), 12000, 'Primary services list');
-      const target = SERVICE_UUID.toLowerCase();
-      service = services.find((s) => String(s.uuid || '').toLowerCase() === target) || null;
-      if (!service) {
-        const found = services.map((s) => String(s.uuid || 'unknown')).join(', ');
-        throw new Error(`Service ${SERVICE_UUID} not found. Device exposed: ${found || 'none'}`);
+    let lastAttemptError = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (device.gatt.connected) {
+          try {
+            device.gatt.disconnect();
+          } catch {
+            // ignore stale disconnect errors
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+
+        connState.textContent = attempt === 1 ? 'Connecting...' : 'Reconnecting...';
+        server = await withTimeout(device.gatt.connect(), 15000, 'GATT connect');
+        resetAudioPipeline();
+
+        connState.textContent = 'Resolving service...';
+        try {
+          service = await withTimeout(server.getPrimaryService(SERVICE_UUID), 20000, 'Primary service');
+        } catch (primaryErr) {
+          log(`Primary service lookup failed: ${formatError(primaryErr)}`);
+          const services = await withTimeout(server.getPrimaryServices(), 12000, 'Primary services list');
+          const target = SERVICE_UUID.toLowerCase();
+          service = services.find((s) => String(s.uuid || '').toLowerCase() === target) || null;
+          if (!service) {
+            const found = services.map((s) => String(s.uuid || 'unknown')).join(', ');
+            throw new Error(`Service ${SERVICE_UUID} not found. Device exposed: ${found || 'none'}`);
+          }
+          log('Recovered service via fallback discovery');
+        }
+
+        // success on this attempt
+        lastAttemptError = null;
+        break;
+      } catch (attemptErr) {
+        lastAttemptError = attemptErr;
+        log(`Connect attempt ${attempt} failed: ${formatError(attemptErr)}`);
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          continue;
+        }
       }
-      log('Recovered service via fallback discovery');
+    }
+
+    if (!service) {
+      throw lastAttemptError || new Error('Unable to resolve TossTalk BLE service');
     }
 
     connState.textContent = 'Resolving characteristics...';
@@ -567,6 +605,8 @@ async function connectBle() {
       // ignore cleanup failures
     }
     throw err;
+  } finally {
+    isConnecting = false;
   }
 }
 
