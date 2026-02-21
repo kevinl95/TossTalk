@@ -457,6 +457,7 @@ function handleState(event) {
 }
 
 async function connectBle() {
+  let server = null;
   try {
     if (!('bluetooth' in navigator)) {
       const msg = getBluetoothUnavailableMessage();
@@ -489,11 +490,25 @@ async function connectBle() {
       disconnectBound = true;
     }
 
-    const server = await withTimeout(device.gatt.connect(), 12000, 'GATT connect');
+    server = await withTimeout(device.gatt.connect(), 15000, 'GATT connect');
     resetAudioPipeline();
 
     connState.textContent = 'Resolving service...';
-    const service = await withTimeout(server.getPrimaryService(SERVICE_UUID), 8000, 'Primary service');
+    let service = null;
+    try {
+      service = await withTimeout(server.getPrimaryService(SERVICE_UUID), 20000, 'Primary service');
+    } catch (primaryErr) {
+      log(`Primary service lookup failed: ${formatError(primaryErr)}`);
+      // Fallback: enumerate all primary services and find our UUID.
+      const services = await withTimeout(server.getPrimaryServices(), 12000, 'Primary services list');
+      const target = SERVICE_UUID.toLowerCase();
+      service = services.find((s) => String(s.uuid || '').toLowerCase() === target) || null;
+      if (!service) {
+        const found = services.map((s) => String(s.uuid || 'unknown')).join(', ');
+        throw new Error(`Service ${SERVICE_UUID} not found. Device exposed: ${found || 'none'}`);
+      }
+      log('Recovered service via fallback discovery');
+    }
 
     connState.textContent = 'Resolving characteristics...';
     const [audioChar, battChar, stateChar] = await withTimeout(
@@ -542,6 +557,15 @@ async function connectBle() {
   } catch (err) {
     connState.textContent = 'Connect failed';
     log(`Connect failed: ${formatError(err)}`);
+    try {
+      if (server?.device?.gatt?.connected) {
+        server.device.gatt.disconnect();
+      } else if (bleDevice?.gatt?.connected) {
+        bleDevice.gatt.disconnect();
+      }
+    } catch {
+      // ignore cleanup failures
+    }
     throw err;
   }
 }
