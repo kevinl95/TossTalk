@@ -53,6 +53,8 @@ let playoutStarted = false;
 let streamSampleRate = 8000;
 let streamSampleCount = 160;
 let lastGoodFrame = null;
+let lastAudioFrameAt = 0;
+let noAudioTimer = null;
 
 const jitterQueue = [];
 
@@ -84,6 +86,33 @@ function updateStatsUi() {
 function log(message) {
   const time = new Date().toLocaleTimeString();
   logs.textContent = `[${time}] ${message}\n` + logs.textContent;
+}
+
+function withTimeout(promise, ms, label) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
+function clearNoAudioMonitor() {
+  if (noAudioTimer) {
+    clearInterval(noAudioTimer);
+    noAudioTimer = null;
+  }
+}
+
+function startNoAudioMonitor() {
+  clearNoAudioMonitor();
+  lastAudioFrameAt = Date.now();
+  noAudioTimer = setInterval(() => {
+    const elapsed = Date.now() - lastAudioFrameAt;
+    if (elapsed > 6000) {
+      log('No audio frames received for 6s. If BLE is connected, this is likely a notification/MTU issue.');
+      lastAudioFrameAt = Date.now();
+    }
+  }, 2000);
 }
 
 function setFlashStatus(text) {
@@ -342,6 +371,7 @@ function handleAudioFrame(event) {
   const flags = dv.getUint8(5);
   const codec = dv.getUint8(6);
   const payload = new Uint8Array(dv.buffer, dv.byteOffset + 8, dv.byteLength - 8);
+  lastAudioFrameAt = Date.now();
 
   ensurePlayoutLoop();
 
@@ -427,57 +457,93 @@ function handleState(event) {
 }
 
 async function connectBle() {
-  if (!('bluetooth' in navigator)) {
-    const msg = getBluetoothUnavailableMessage();
-    connState.textContent = 'Web Bluetooth unavailable';
-    log(msg.replaceAll('\n', ' | '));
-    alert(msg);
-    return;
+  try {
+    if (!('bluetooth' in navigator)) {
+      const msg = getBluetoothUnavailableMessage();
+      connState.textContent = 'Web Bluetooth unavailable';
+      log(msg.replaceAll('\n', ' | '));
+      alert(msg);
+      return;
+    }
+
+    connState.textContent = 'Selecting device...';
+    const device = bleDevice || (await withTimeout(
+      navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE_UUID] }],
+        optionalServices: [SERVICE_UUID],
+      }),
+      30000,
+      'Device picker'
+    ));
+    bleDevice = device;
+    connState.textContent = 'Connecting...';
+
+    if (!disconnectBound) {
+      device.addEventListener('gattserverdisconnected', () => {
+        connState.textContent = 'Disconnected';
+        log('BLE disconnected');
+        resetAudioPipeline();
+        clearNoAudioMonitor();
+        scheduleReconnect();
+      });
+      disconnectBound = true;
+    }
+
+    const server = await withTimeout(device.gatt.connect(), 12000, 'GATT connect');
+    resetAudioPipeline();
+
+    connState.textContent = 'Resolving service...';
+    const service = await withTimeout(server.getPrimaryService(SERVICE_UUID), 8000, 'Primary service');
+
+    connState.textContent = 'Resolving characteristics...';
+    const [audioChar, battChar, stateChar] = await withTimeout(
+      Promise.all([
+        service.getCharacteristic(AUDIO_CHAR_UUID),
+        service.getCharacteristic(BATT_CHAR_UUID),
+        service.getCharacteristic(STATE_CHAR_UUID),
+      ]),
+      8000,
+      'Characteristics'
+    );
+
+    connState.textContent = 'Starting notifications...';
+    await withTimeout(
+      Promise.all([
+        audioChar.startNotifications(),
+        battChar.startNotifications(),
+        stateChar.startNotifications(),
+      ]),
+      10000,
+      'Start notifications'
+    );
+
+    audioChar.addEventListener('characteristicvaluechanged', handleAudioFrame);
+    battChar.addEventListener('characteristicvaluechanged', handleBattery);
+    stateChar.addEventListener('characteristicvaluechanged', handleState);
+
+    try {
+      const battNow = await withTimeout(battChar.readValue(), 3000, 'Read battery');
+      handleBattery({ target: { value: battNow } });
+    } catch (err) {
+      log(`Battery read skipped: ${formatError(err)}`);
+    }
+
+    try {
+      const stateNow = await withTimeout(stateChar.readValue(), 3000, 'Read state');
+      handleState({ target: { value: stateNow } });
+    } catch (err) {
+      log(`State read skipped: ${formatError(err)}`);
+    }
+
+    clearReconnect();
+    startNoAudioMonitor();
+    connState.textContent = `Connected: ${device.name || 'TossTalk'}`;
+    log('BLE connected and notifications active');
+  } catch (err) {
+    connState.textContent = 'Connect failed';
+    log(`Connect failed: ${formatError(err)}`);
+    throw err;
   }
-
-  connState.textContent = 'Selecting device...';
-  const device = bleDevice || (await navigator.bluetooth.requestDevice({
-    filters: [{ services: [SERVICE_UUID] }],
-    optionalServices: [SERVICE_UUID],
-  }));
-  bleDevice = device;
-
-  if (!disconnectBound) {
-    device.addEventListener('gattserverdisconnected', () => {
-      connState.textContent = 'Disconnected';
-      log('BLE disconnected');
-      resetAudioPipeline();
-      scheduleReconnect();
-    });
-    disconnectBound = true;
-  }
-
-  const server = await device.gatt.connect();
-  resetAudioPipeline();
-  const service = await server.getPrimaryService(SERVICE_UUID);
-
-  const audioChar = await service.getCharacteristic(AUDIO_CHAR_UUID);
-  const battChar = await service.getCharacteristic(BATT_CHAR_UUID);
-  const stateChar = await service.getCharacteristic(STATE_CHAR_UUID);
-
-  await Promise.all([
-    audioChar.startNotifications(),
-    battChar.startNotifications(),
-    stateChar.startNotifications(),
-  ]);
-
-  audioChar.addEventListener('characteristicvaluechanged', handleAudioFrame);
-  battChar.addEventListener('characteristicvaluechanged', handleBattery);
-  stateChar.addEventListener('characteristicvaluechanged', handleState);
-
-  const battNow = await battChar.readValue();
-  handleBattery({ target: { value: battNow } });
-  const stateNow = await stateChar.readValue();
-  handleState({ target: { value: stateNow } });
-
-  clearReconnect();
-  connState.textContent = `Connected: ${device.name || 'TossTalk'}`;
-  log('BLE connected and notifications active');
 }
 
 function clearReconnect() {
