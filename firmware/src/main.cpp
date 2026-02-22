@@ -224,11 +224,8 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
 
 // ── IMU / gate logic ─────────────────────────────────────────────────────
 float readAccelMagnitudeG() {
-  if (M5.Imu.update()) {
-    auto d = M5.Imu.getImuData();
-    return std::sqrt(d.accel.x*d.accel.x + d.accel.y*d.accel.y + d.accel.z*d.accel.z);
-  }
-  return 1.0f;
+  auto d = M5.Imu.getImuData();
+  return std::sqrt(d.accel.x*d.accel.x + d.accel.y*d.accel.y + d.accel.z*d.accel.z);
 }
 
 void notifyGateState() {
@@ -255,7 +252,12 @@ void updateGateState() {
     case GateState::Reacquire:
       if (now - reacquireStartMs >= REACQ_MS) gateState = GateState::UnmutedLive; break;
   }
-  if (prev != gateState) { notifyGateState(); drawRuntimeStatus(); }
+  if (prev != gateState) {
+    Serial.printf("[GATE] %s -> %s (mag=%.2fg)\n",
+                  gateStateName(prev), gateStateName(gateState), mag);
+    notifyGateState();
+    displayDirty = true;  // defer display to heavy-IO block
+  }
 }
 
 // ── Battery ──────────────────────────────────────────────────────────────
@@ -601,12 +603,16 @@ void loop() {
 
   const bool streaming = bleClientConnected && firstAudioSent;
 
-  // While streaming, only do heavy I/O (IMU, battery, display) every 500ms
-  // to avoid starving the NimBLE host task with I2C/SPI bus operations.
+  // IMU must be polled every loop iteration — a throw is only ~300ms
+  // and the freefall window can be <100ms.  IMU read is a fast I2C
+  // transaction (~200us), not a heavy SPI display write.
+  M5.Imu.update();         // refresh accelerometer data
+  updateGateState();
+
+  // Battery + display are expensive (SPI).  Throttle while streaming.
   if (!streaming || (now - lastHeavyIoMs >= HEAVY_IO_INTERVAL_MS)) {
     lastHeavyIoMs = now;
-    M5.update();
-    updateGateState();
+    M5.update();           // buttons, power
     updateBattery();
     if (displayDirty) {
       displayDirty = false;
