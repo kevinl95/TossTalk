@@ -29,6 +29,7 @@
 
 #include <M5Unified.h>
 #include <NimBLEDevice.h>
+#include <host/ble_hs_id.h>   // ble_hs_id_set_rnd()
 #include <cmath>
 
 // ── UUIDs ────────────────────────────────────────────────────────────────
@@ -409,8 +410,28 @@ void setupBle() {
   NimBLEDevice::init(DEVICE_NAME);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-  // Delete all stored bonds so Windows/Edge doesn't use stale cached GATT
-  // attribute handles from a previous firmware version.
+  // ── Force a fresh random-static address ────────────────────────────────
+  // Windows/Edge caches the GATT attribute table keyed by the device's MAC
+  // address.  Every firmware flash changes the GATT layout, but Windows
+  // keeps using the stale cached handles → disconnect during discovery.
+  // The Forget button in edge://bluetooth-internals is broken, so we
+  // sidestep the entire problem by presenting a new MAC address.
+  // Top two bits = 0b11 marks this as a "random static" address per BT spec.
+  {
+    ble_addr_t addr;
+    addr.type = BLE_OWN_ADDR_RANDOM;
+    // Arbitrary bytes – change any byte here to get a fresh identity.
+    addr.val[0] = 0xAA;
+    addr.val[1] = 0xBB;
+    addr.val[2] = 0x11;
+    addr.val[3] = 0x22;
+    addr.val[4] = 0x33;
+    addr.val[5] = 0xC4;  // top 2 bits = 11 → random static
+    ble_hs_id_set_rnd(addr.val);
+    NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
+  }
+
+  // Delete all stored bonds so the ESP32 side is clean too.
   NimBLEDevice::deleteAllBonds();
 
   // Disable bonding and security entirely – we don't need encryption for
