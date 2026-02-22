@@ -75,6 +75,16 @@ bool     firstAudioSent     = false;
 bool     micAvailable       = false;
 volatile bool displayDirty  = false;  // set in BLE callbacks, drawn in loop()
 
+// Diagnostic counters
+uint32_t dbgNotifyOk   = 0;
+uint32_t dbgNotifyFail = 0;
+uint32_t dbgFramesSent = 0;
+uint32_t lastDiagMs    = 0;
+
+// Throttle heavy I/O while streaming
+uint32_t lastHeavyIoMs = 0;
+static constexpr uint32_t HEAVY_IO_INTERVAL_MS = 500;  // IMU+battery+display at most 2x/sec while streaming
+
 // How long after connect to avoid ALL non-BLE work so the NimBLE stack
 // can handle service discovery on single-core ESP32 unimpeded.
 static constexpr uint32_t BLE_SETTLING_MS = 5000;
@@ -121,8 +131,17 @@ bool canNotify() {
 bool rawNotify(NimBLECharacteristic* chr, const uint8_t* data, size_t len) {
   if (bleConnHandle == 0xFFFF) return false;
   struct os_mbuf* om = ble_hs_mbuf_from_flat(data, static_cast<uint16_t>(len));
-  if (!om) return false;
-  return ble_gattc_notify_custom(bleConnHandle, chr->getHandle(), om) == 0;
+  if (!om) {
+    dbgNotifyFail++;
+    return false;
+  }
+  int rc = ble_gattc_notify_custom(bleConnHandle, chr->getHandle(), om);
+  if (rc != 0) {
+    dbgNotifyFail++;
+    return false;
+  }
+  dbgNotifyOk++;
+  return true;
 }
 
 // ── Gate helpers ─────────────────────────────────────────────────────────
@@ -369,7 +388,8 @@ bool sendNextSubPacket() {
 
   bool ok = rawNotify(audioChar, pkt, len);
   if (!ok) {
-    // BLE buffer full – retry on next loop
+    // BLE buffer full – DON'T advance txSubNext, retry on next loop
+    txLastSubMs = millis();  // still pace the retry
     return false;
   }
 
@@ -378,11 +398,12 @@ bool sendNextSubPacket() {
 
   if (txSubNext >= TOTAL_SUB) {
     // Frame complete
+    dbgFramesSent++;
     if (!firstAudioSent) {
       firstAudioSent = true;
       Serial.printf("[BLE] First audio seq=%u MTU=%u\n",
                     txFrameSeq, ble_att_mtu(bleConnHandle));
-      drawRuntimeStatus();
+      displayDirty = true;
     }
     ++frameSeq;
   }
@@ -491,28 +512,42 @@ void setup() {
 }
 
 void loop() {
+  const uint32_t now = millis();
+
   // During the settling window after BLE connect, do NOTHING except yield
   // CPU.  The ESP32-PICO is single-core; the NimBLE host task needs every
   // spare cycle to handle service discovery, characteristic resolution,
   // and CCCD writes from the browser.
   const bool settling = bleClientConnected &&
-                        (millis() - bleConnectedAtMs < BLE_SETTLING_MS);
-
+                        (now - bleConnectedAtMs < BLE_SETTLING_MS);
   if (settling) {
-    delay(10);  // aggressive yield for BLE stack
+    delay(10);
     return;
   }
 
-  M5.update();
-  updateGateState();
-  updateBattery();
+  const bool streaming = bleClientConnected && firstAudioSent;
 
-  // Process display updates deferred from BLE callbacks
-  if (displayDirty) {
-    displayDirty = false;
-    drawRuntimeStatus();
+  // While streaming, only do heavy I/O (IMU, battery, display) every 500ms
+  // to avoid starving the NimBLE host task with I2C/SPI bus operations.
+  if (!streaming || (now - lastHeavyIoMs >= HEAVY_IO_INTERVAL_MS)) {
+    lastHeavyIoMs = now;
+    M5.update();
+    updateGateState();
+    updateBattery();
+    if (displayDirty) {
+      displayDirty = false;
+      drawRuntimeStatus();
+    }
   }
 
   sendMicAudioFrame();
+
+  // Periodic diagnostics (every 5s)
+  if (streaming && (now - lastDiagMs >= 5000)) {
+    lastDiagMs = now;
+    Serial.printf("[DIAG] frames=%u ok=%u fail=%u\n",
+                  dbgFramesSent, dbgNotifyOk, dbgNotifyFail);
+  }
+
   delay(1);
 }
