@@ -446,7 +446,7 @@ void setupBle() {
     ble_addr_t addr;
     addr.type = BLE_OWN_ADDR_RANDOM;
     // Arbitrary bytes – change any byte here to get a fresh identity.
-    addr.val[0] = 0xAA;
+    addr.val[0] = 0xAB;
     addr.val[1] = 0xBB;
     addr.val[2] = 0x11;
     addr.val[3] = 0x22;
