@@ -503,32 +503,32 @@ async function connectBle() {
     let lastAttemptError = null;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        if (device.gatt.connected) {
-          try {
-            device.gatt.disconnect();
-          } catch {
-            // ignore stale disconnect errors
-          }
-          await new Promise((resolve) => setTimeout(resolve, 250));
-        }
-
         connState.textContent = attempt === 1 ? 'Connecting...' : 'Reconnecting...';
-        server = await withTimeout(device.gatt.connect(), 15000, 'GATT connect');
+        if (!device.gatt.connected) {
+          server = await withTimeout(device.gatt.connect(), 15000, 'GATT connect');
+        } else {
+          server = device.gatt;
+        }
         resetAudioPipeline();
 
-        connState.textContent = 'Resolving service...';
-        try {
-          service = await withTimeout(server.getPrimaryService(SERVICE_UUID), 20000, 'Primary service');
-        } catch (primaryErr) {
-          log(`Primary service lookup failed: ${formatError(primaryErr)}`);
-          const services = await withTimeout(server.getPrimaryServices(), 12000, 'Primary services list');
-          const target = SERVICE_UUID.toLowerCase();
-          service = services.find((s) => String(s.uuid || '').toLowerCase() === target) || null;
-          if (!service) {
-            const found = services.map((s) => String(s.uuid || 'unknown')).join(', ');
-            throw new Error(`Service ${SERVICE_UUID} not found. Device exposed: ${found || 'none'}`);
+        // Service discovery can race with transient GATT drops on some stacks.
+        // Try a few quick reconnect+service attempts before failing.
+        for (let svcTry = 1; svcTry <= 3; svcTry++) {
+          connState.textContent = `Resolving service... (${svcTry}/3)`;
+          try {
+            service = await withTimeout(server.getPrimaryService(SERVICE_UUID), 5000, 'Primary service');
+            break;
+          } catch (primaryErr) {
+            log(`Primary service lookup failed (try ${svcTry}/3): ${formatError(primaryErr)}`);
+            if (!device.gatt.connected) {
+              connState.textContent = 'Reconnecting for service discovery...';
+              await new Promise((resolve) => setTimeout(resolve, 300));
+              server = await withTimeout(device.gatt.connect(), 12000, 'GATT reconnect');
+            }
+            if (svcTry === 3) {
+              throw primaryErr;
+            }
           }
-          log('Recovered service via fallback discovery');
         }
 
         // success on this attempt
