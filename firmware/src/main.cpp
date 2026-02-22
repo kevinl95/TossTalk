@@ -80,6 +80,7 @@ uint32_t dbgNotifyOk   = 0;
 uint32_t dbgNotifyFail = 0;
 uint32_t dbgFramesSent = 0;
 uint32_t lastDiagMs    = 0;
+uint8_t  consecFail    = 0;   // consecutive rawNotify failures
 
 // Throttle heavy I/O while streaming
 uint32_t lastHeavyIoMs = 0;
@@ -433,6 +434,7 @@ void sendMicAudioFrame() {
     memcpy(&pkt[5], txAdpcm, 80);
 
     if (rawNotify(audioChar, pkt, 85)) {
+      consecFail = 0;
       dbgFramesSent++;
       if (!firstAudioSent) {
         firstAudioSent = true;
@@ -440,6 +442,11 @@ void sendMicAudioFrame() {
         displayDirty = true;
       }
       ++frameSeq;
+    } else {
+      if (++consecFail >= 4) {
+        delay(5);             // yield CPU so NimBLE can flush outbound queue
+        consecFail = 2;       // don't grow forever, but stay in backoff zone
+      }
     }
     txSubNext = TOTAL_SUB;  // keep sub-packet state idle
     return;
@@ -573,6 +580,7 @@ void loop() {
       displayDirty = false;
       drawRuntimeStatus();
     }
+    if (streaming) delay(2);  // yield extra CPU to NimBLE after heavy I/O
   }
 
   sendMicAudioFrame();
@@ -580,8 +588,8 @@ void loop() {
   // Periodic diagnostics (every 5s)
   if (streaming && (now - lastDiagMs >= 5000)) {
     lastDiagMs = now;
-    Serial.printf("[DIAG] frames=%u ok=%u fail=%u\n",
-                  dbgFramesSent, dbgNotifyOk, dbgNotifyFail);
+    Serial.printf("[DIAG] frames=%u ok=%u fail=%u cfail=%u\n",
+                  dbgFramesSent, dbgNotifyOk, dbgNotifyFail, consecFail);
   }
 
   delay(1);
