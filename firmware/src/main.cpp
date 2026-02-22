@@ -273,81 +273,129 @@ bool popMicFrame(int16_t* out) {
   return true;
 }
 
-// ── Audio frame sender (5 small sub-packets per 20 ms frame) ─────────────
+// ── Paced audio frame sender ─────────────────────────────────────────────
+// We encode a full 20-ms frame (160 samples → 80 ADPCM bytes) once, then
+// drip-feed one sub-packet per loop() call with >= 4 ms spacing.  This
+// keeps the NimBLE outbound mbuf pool from overflowing.
+
 static constexpr uint8_t PKT0_ADPCM = 15;  // 30 samples
 static constexpr uint8_t PKTN_ADPCM = 18;  // 36 samples
 static constexpr uint8_t PKT4_ADPCM = 11;  // 22 samples
+static constexpr uint8_t TOTAL_SUB  = 5;
+static constexpr uint32_t SUB_INTERVAL_MS = 4;  // ms between sub-packets
 
-void sendMicAudioFrame() {
-  if (!canNotify()) return;
-  const uint32_t now = millis();
-  if (now - lastAudioTickMs < 20) return;
-  lastAudioTickMs = now;
+// Frame encoding buffer (persists between loop calls)
+uint8_t  txAdpcm[80];
+int16_t  txPred      = 0;
+uint8_t  txIdx       = 0;
+uint8_t  txMutedBit  = 0;
+uint8_t  txFrameSeq  = 0;
+uint8_t  txSubNext   = TOTAL_SUB;  // TOTAL_SUB = idle (no frame pending)
+uint32_t txLastSubMs = 0;
 
+void encodeNewFrame() {
   queueMicCapture();
 
   const bool talkOpen = (gateState == GateState::UnmutedLive ||
                          gateState == GateState::Reacquire);
-  const uint8_t mutedBit = talkOpen ? 0x00 : 0x80;
+  txMutedBit = talkOpen ? 0x00 : 0x80;
 
   int16_t samples[AUDIO_SAMPLE_COUNT];
   const bool haveMic = popMicFrame(samples);
   if (!(talkOpen && haveMic)) memset(samples, 0, sizeof(samples));
 
-  // Snapshot ADPCM state for sub-packet 0 header
   AdpcmState enc = adpcmState;
-  int16_t predSnap = static_cast<int16_t>(enc.predictor);
-  uint8_t idxSnap  = static_cast<uint8_t>(enc.index);
+  txPred = static_cast<int16_t>(enc.predictor);
+  txIdx  = static_cast<uint8_t>(enc.index);
 
-  // Encode all 160 samples into 80 ADPCM bytes
-  uint8_t adpcm[80];
   for (size_t i = 0; i < AUDIO_SAMPLE_COUNT; i += 2) {
     uint8_t n0 = encodeNibble(samples[i],   enc);
     uint8_t n1 = encodeNibble(samples[i+1], enc);
-    adpcm[i/2] = static_cast<uint8_t>((n1 << 4) | n0);
+    txAdpcm[i/2] = static_cast<uint8_t>((n1 << 4) | n0);
   }
   adpcmState = enc;
 
-  // Sub-packet 0: header + 30 samples
-  {
-    uint8_t pkt[20];
-    pkt[0] = frameSeq;
-    pkt[1] = 0x00 | mutedBit;
-    pkt[2] = static_cast<uint8_t>(predSnap & 0xFF);
-    pkt[3] = static_cast<uint8_t>((predSnap >> 8) & 0xFF);
-    pkt[4] = idxSnap;
-    memcpy(&pkt[5], &adpcm[0], PKT0_ADPCM);
-    rawNotify(audioChar, pkt, 20);
+  txFrameSeq = frameSeq;
+  txSubNext  = 0;
+  txLastSubMs = millis();
+}
+
+bool sendNextSubPacket() {
+  if (txSubNext >= TOTAL_SUB) return false;  // idle
+
+  uint8_t pkt[20];
+  size_t  len = 0;
+
+  switch (txSubNext) {
+    case 0:
+      pkt[0] = txFrameSeq;
+      pkt[1] = 0x00 | txMutedBit;
+      pkt[2] = static_cast<uint8_t>(txPred & 0xFF);
+      pkt[3] = static_cast<uint8_t>((txPred >> 8) & 0xFF);
+      pkt[4] = txIdx;
+      memcpy(&pkt[5], &txAdpcm[0], PKT0_ADPCM);
+      len = 20;
+      break;
+    case 1: case 2: case 3: {
+      size_t adpcmOff = PKT0_ADPCM + (txSubNext - 1) * PKTN_ADPCM;
+      pkt[0] = txFrameSeq;
+      pkt[1] = txSubNext | txMutedBit;
+      memcpy(&pkt[2], &txAdpcm[adpcmOff], PKTN_ADPCM);
+      len = 20;
+      break;
+    }
+    case 4: {
+      size_t adpcmOff = PKT0_ADPCM + 3 * PKTN_ADPCM;  // 69
+      pkt[0] = txFrameSeq;
+      pkt[1] = 0x04 | txMutedBit;
+      memcpy(&pkt[2], &txAdpcm[adpcmOff], PKT4_ADPCM);
+      len = 13;
+      break;
+    }
+    default:
+      return false;
   }
 
-  size_t pos = PKT0_ADPCM;  // 15
-
-  // Sub-packets 1..3: 36 samples each
-  for (uint8_t p = 1; p <= 3; ++p) {
-    uint8_t pkt[20];
-    pkt[0] = frameSeq;
-    pkt[1] = p | mutedBit;
-    memcpy(&pkt[2], &adpcm[pos], PKTN_ADPCM);
-    rawNotify(audioChar, pkt, 20);
-    pos += PKTN_ADPCM;
+  bool ok = rawNotify(audioChar, pkt, len);
+  if (!ok) {
+    // BLE buffer full – retry on next loop
+    return false;
   }
 
-  // Sub-packet 4: 22 samples
-  {
-    uint8_t pkt[13];
-    pkt[0] = frameSeq;
-    pkt[1] = 0x04 | mutedBit;
-    memcpy(&pkt[2], &adpcm[pos], PKT4_ADPCM);
-    rawNotify(audioChar, pkt, 13);
+  txSubNext++;
+  txLastSubMs = millis();
+
+  if (txSubNext >= TOTAL_SUB) {
+    // Frame complete
+    if (!firstAudioSent) {
+      firstAudioSent = true;
+      Serial.printf("[BLE] First audio seq=%u MTU=%u\n",
+                    txFrameSeq, ble_att_mtu(bleConnHandle));
+      drawRuntimeStatus();
+    }
+    ++frameSeq;
+  }
+  return true;
+}
+
+void sendMicAudioFrame() {
+  if (!canNotify()) return;
+  const uint32_t now = millis();
+
+  // If we have a frame in flight, pace the sub-packets
+  if (txSubNext < TOTAL_SUB) {
+    if (now - txLastSubMs >= SUB_INTERVAL_MS) {
+      sendNextSubPacket();
+    }
+    return;
   }
 
-  if (!firstAudioSent) {
-    firstAudioSent = true;
-    Serial.printf("[BLE] First audio seq=%u MTU=%u\n",
-                  frameSeq, ble_att_mtu(bleConnHandle));
-    drawRuntimeStatus();
-  }
-  ++frameSeq;
+  // No frame in flight – time for a new one?
+  if (now - lastAudioTickMs < 20) return;
+  lastAudioTickMs = now;
+
+  encodeNewFrame();
+  sendNextSubPacket();  // send sub-packet 0 immediately
 }
 
 // ── BLE setup ────────────────────────────────────────────────────────────

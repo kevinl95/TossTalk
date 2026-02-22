@@ -258,6 +258,11 @@ function handleAudioSubPacket(event) {
   const pktIdx  = byte1 & 0x0F;
   const muted   = !!(byte1 & 0x80);
 
+  // Log every sub-packet for the first 3 frames to diagnose flow
+  if (stats.subPkts <= 15) {
+    log(`Sub-pkt #${stats.subPkts}: seq=${seq} idx=${pktIdx} len=${dv.byteLength} muted=${muted}`);
+  }
+
   // If seq changed, finalize previous frame (if any) and start fresh
   if (seq !== assemblySeq) {
     if (assemblySeq !== null && assemblyPkts !== 0) {
