@@ -26,7 +26,7 @@ const FRAME_MS      = 20;
 const SUB_PACKETS   = 5;
 const TARGET_BUFFER = 3;   // frames before playout begins
 const MAX_BUFFER    = 24;
-const MAX_CONCEAL   = 8;
+const MAX_CONCEAL   = 3;   // firmware may skip frames for BLE recovery; keep silence short
 
 // ── ADPCM tables ─────────────────────────────────────────────────────────
 const INDEX_TABLE = [-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8];
@@ -274,6 +274,16 @@ function handleAudioSubPacket(event) {
     const idx   = dv.getUint8(4);
     const adpcm = new Uint8Array(dv.buffer, dv.byteOffset + 5, 80);
 
+    // Insert concealment for skipped seqs BEFORE the real frame
+    if (lastCompleteSeq !== null) {
+      let gap = ((seq - lastCompleteSeq + 256) % 256) - 1;
+      if (gap > 0 && gap < 60) {
+        const conceal = Math.min(gap, MAX_CONCEAL);
+        for (let i = 0; i < conceal; i++) { enqueue(makeConceal(SAMPLE_COUNT)); stats.concealedFrames++; }
+      }
+    }
+    lastCompleteSeq = seq;
+
     if (muted) {
       enqueue(new Int16Array(SAMPLE_COUNT));
       stats.mutedFrames++;
@@ -287,16 +297,6 @@ function handleAudioSubPacket(event) {
     if (stats.frames <= 3) {
       log(`Frame #${stats.frames} (single-pkt): seq=${seq} pred=${pred} idx=${idx} muted=${muted}`);
     }
-
-    // Concealment for any skipped sequences
-    if (lastCompleteSeq !== null) {
-      let gap = ((seq - lastCompleteSeq + 256) % 256) - 1;
-      if (gap > 0 && gap < 60) {
-        const conceal = Math.min(gap, MAX_CONCEAL);
-        for (let i = 0; i < conceal; i++) { enqueue(makeConceal(SAMPLE_COUNT)); stats.concealedFrames++; }
-      }
-    }
-    lastCompleteSeq = seq;
     ensurePlayoutLoop();
     updateStatsUi();
     return;

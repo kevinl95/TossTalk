@@ -76,11 +76,13 @@ bool     micAvailable       = false;
 volatile bool displayDirty  = false;  // set in BLE callbacks, drawn in loop()
 
 // Diagnostic counters
-uint32_t dbgNotifyOk   = 0;
-uint32_t dbgNotifyFail = 0;
-uint32_t dbgFramesSent = 0;
-uint32_t lastDiagMs    = 0;
-uint8_t  consecFail    = 0;   // consecutive rawNotify failures
+uint32_t dbgNotifyOk    = 0;
+uint32_t dbgNotifyFail  = 0;
+uint32_t dbgMbufFail    = 0;   // subset of fails: mbuf pool exhausted
+uint32_t dbgFramesSent  = 0;
+uint32_t dbgFramesSkip  = 0;   // frames intentionally skipped for backoff
+uint32_t lastDiagMs     = 0;
+uint16_t consecFail     = 0;   // consecutive rawNotify failures
 
 // Throttle heavy I/O while streaming
 uint32_t lastHeavyIoMs = 0;
@@ -133,7 +135,11 @@ bool rawNotify(NimBLECharacteristic* chr, const uint8_t* data, size_t len) {
   if (bleConnHandle == 0xFFFF) return false;
   struct os_mbuf* om = ble_hs_mbuf_from_flat(data, static_cast<uint16_t>(len));
   if (!om) {
+    // mbuf pool exhausted — every pending TX holds an mbuf.  We MUST wait
+    // for the controller to transmit them and return mbufs to the pool.
     dbgNotifyFail++;
+    dbgMbufFail++;
+    delay(8);   // let BLE controller drain a connection event
     return false;
   }
   int rc = ble_gattc_notify_custom(bleConnHandle, chr->getHandle(), om);
@@ -441,14 +447,21 @@ void sendMicAudioFrame() {
         Serial.printf("[BLE] Single-pkt mode seq=%u MTU=%u\n", txFrameSeq, mtu);
         displayDirty = true;
       }
-      ++frameSeq;
     } else {
-      if (++consecFail >= 4) {
-        delay(5);             // yield CPU so NimBLE can flush outbound queue
-        consecFail = 2;       // don't grow forever, but stay in backoff zone
+      ++consecFail;
+      // Frame is lost (ADPCM state already advanced) — accept the gap.
+      // Skip future frames so the BLE stack can drain its TX queue.
+      if (consecFail >= 3) {
+        lastAudioTickMs += 20;     // skip 1 extra frame (40 ms gap)
+        dbgFramesSkip++;
+      }
+      if (consecFail >= 8) {
+        lastAudioTickMs += 60;     // skip 3 more frames (total 100 ms gap)
+        dbgFramesSkip += 3;
       }
     }
-    txSubNext = TOTAL_SUB;  // keep sub-packet state idle
+    ++frameSeq;                    // ALWAYS advance — stale retries break ADPCM sync
+    txSubNext = TOTAL_SUB;
     return;
   }
 
@@ -580,7 +593,6 @@ void loop() {
       displayDirty = false;
       drawRuntimeStatus();
     }
-    if (streaming) delay(2);  // yield extra CPU to NimBLE after heavy I/O
   }
 
   sendMicAudioFrame();
@@ -588,8 +600,9 @@ void loop() {
   // Periodic diagnostics (every 5s)
   if (streaming && (now - lastDiagMs >= 5000)) {
     lastDiagMs = now;
-    Serial.printf("[DIAG] frames=%u ok=%u fail=%u cfail=%u\n",
-                  dbgFramesSent, dbgNotifyOk, dbgNotifyFail, consecFail);
+    Serial.printf("[DIAG] sent=%u ok=%u fail=%u mbuf=%u skip=%u cf=%u\n",
+                  dbgFramesSent, dbgNotifyOk, dbgNotifyFail,
+                  dbgMbufFail, dbgFramesSkip, consecFail);
   }
 
   delay(1);
