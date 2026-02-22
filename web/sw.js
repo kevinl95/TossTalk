@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tosstalk-v3';
+const CACHE_NAME = 'tosstalk-v4';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './favicon.svg'];
 
 self.addEventListener('install', (event) => {
