@@ -110,7 +110,7 @@ function startNoAudioMonitor() {
   noAudioTimer = setInterval(() => {
     const elapsed = Date.now() - lastAudioFrameAt;
     if (elapsed > 6000) {
-      log('No audio frames received for 6s. If BLE is connected, this is likely a notification/MTU issue.');
+      log(`No audio frames for 6 s (${stats.frames} total received). Check device serial monitor for MTU / notify info.`);
       lastAudioFrameAt = Date.now();
     }
   }, 2000);
@@ -374,6 +374,10 @@ function handleAudioFrame(event) {
   const payload = new Uint8Array(dv.buffer, dv.byteOffset + 8, dv.byteLength - 8);
   lastAudioFrameAt = Date.now();
 
+  if (stats.frames < 5) {
+    log(`Audio frame #${stats.frames + 1}: ${dv.byteLength} bytes, seq=${seq}, sr=${sampleRate}, samples=${sampleCount}, codec=${codec}, flags=0x${flags.toString(16)}`);
+  }
+
   ensurePlayoutLoop();
 
   if (lastSeq !== null) {
@@ -588,7 +592,7 @@ async function connectBle() {
     clearReconnect();
     startNoAudioMonitor();
     connState.textContent = `Connected: ${device.name || 'TossTalk'}`;
-    log('BLE connected and notifications active');
+    log('BLE connected \u2013 notifications active. Device needs ~2.5 s warm-up before audio starts.');
   } catch (err) {
     connState.textContent = 'Connect failed';
     log(`Connect failed: ${formatError(err)}`);

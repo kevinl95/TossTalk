@@ -35,6 +35,8 @@ uint32_t seq = 0;
 bool bleClientConnected = false;
 uint32_t bleConnectedAtMs = 0;
 bool micAvailable = false;
+uint16_t bleConnHandle = 0xFFFF;
+bool firstAudioSent = false;
 
 static constexpr uint16_t AUDIO_SAMPLE_RATE = 8000;
 static constexpr uint8_t AUDIO_SAMPLE_COUNT = 160;  // 20 ms @ 8 kHz
@@ -83,6 +85,17 @@ bool canNotify(NimBLECharacteristic* ch) {
   return bleClientConnected && (millis() - bleConnectedAtMs >= 2500);
 }
 
+// Send a BLE notification using the raw NimBLE C API, bypassing the
+// NimBLE-Arduino subscription-map check that can silently swallow frames
+// when Chrome/Edge doesn't write the CCCD in the way the wrapper expects.
+bool rawNotify(NimBLECharacteristic* chr, const uint8_t* data, size_t len) {
+  if (bleConnHandle == 0xFFFF) return false;
+  struct os_mbuf* om = ble_hs_mbuf_from_flat(data, static_cast<uint16_t>(len));
+  if (!om) return false;
+  int rc = ble_gattc_notify_custom(bleConnHandle, chr->getHandle(), om);
+  return rc == 0;
+}
+
 const char* gateStateName(GateState s) {
   switch (s) {
     case GateState::UnmutedLive:
@@ -103,22 +116,29 @@ void drawRuntimeStatus() {
   M5.Display.setCursor(4, 54);
   M5.Display.printf("%s", gateStateName(gateState));
   M5.Display.setCursor(4, 74);
-  M5.Display.printf("BLE %s", bleClientConnected ? "connected" : "waiting");
+  uint16_t mtu = (bleConnHandle != 0xFFFF) ? ble_att_mtu(bleConnHandle) : 0;
+  M5.Display.printf("BLE %s MTU%u", bleClientConnected ? "on" : "--", mtu);
   M5.Display.setCursor(4, 94);
   M5.Display.printf("MIC %s", micAvailable ? "ready" : "not-ready");
 }
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* pServer) {
+  void onConnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) override {
     (void)pServer;
     bleClientConnected = true;
     bleConnectedAtMs = millis();
+    bleConnHandle = desc->conn_handle;
+    firstAudioSent = false;
+    Serial.printf("[BLE] Connected handle=%u MTU=%u\n",
+                  bleConnHandle, ble_att_mtu(bleConnHandle));
     drawRuntimeStatus();
   }
 
-  void onDisconnect(NimBLEServer* pServer) {
+  void onDisconnect(NimBLEServer* pServer) override {
     bleClientConnected = false;
     bleConnectedAtMs = 0;
+    bleConnHandle = 0xFFFF;
+    firstAudioSent = false;
     drawRuntimeStatus();
     pServer->startAdvertising();
   }
@@ -153,7 +173,7 @@ void notifyGateState() {
   uint8_t payload[2] = {static_cast<uint8_t>(gateState), 0};
   stateChar->setValue(payload, sizeof(payload));
   if (canNotify(stateChar)) {
-    stateChar->notify();
+    rawNotify(stateChar, payload, sizeof(payload));
   }
 }
 
@@ -234,7 +254,7 @@ void updateBattery() {
     uint8_t payload[2] = {percent, static_cast<uint8_t>(charging ? 1 : 0)};
     batteryChar->setValue(payload, sizeof(payload));
     if (canNotify(batteryChar)) {
-      batteryChar->notify();
+      rawNotify(batteryChar, payload, sizeof(payload));
     }
   }
 }
@@ -372,8 +392,19 @@ void sendMicAudioFrame() {
 
   adpcmState = encodeState;
 
-  audioChar->setValue(frame, sizeof(frame));
-  audioChar->notify();
+  uint16_t mtu = ble_att_mtu(bleConnHandle);
+  bool ok = rawNotify(audioChar, frame, sizeof(frame));
+  if (!firstAudioSent) {
+    if (ok) {
+      firstAudioSent = true;
+      Serial.printf("[BLE] First audio sent seq=%u MTU=%u size=%u\n",
+                    (unsigned)seq, mtu, (unsigned)sizeof(frame));
+      drawRuntimeStatus();
+    } else if (seq % 150 == 0) {
+      Serial.printf("[BLE] Audio notify FAIL seq=%u MTU=%u subs=%u\n",
+                    (unsigned)seq, mtu, audioChar->getSubscribedCount());
+    }
+  }
   ++seq;
 }
 
