@@ -560,15 +560,12 @@ async function connectBle() {
     );
 
     connState.textContent = 'Starting notifications...';
-    await withTimeout(
-      Promise.all([
-        audioChar.startNotifications(),
-        battChar.startNotifications(),
-        stateChar.startNotifications(),
-      ]),
-      10000,
-      'Start notifications'
-    );
+    await withTimeout(battChar.startNotifications(), 7000, 'Start battery notifications');
+    log('Battery notifications started');
+    await withTimeout(stateChar.startNotifications(), 7000, 'Start state notifications');
+    log('State notifications started');
+    await withTimeout(audioChar.startNotifications(), 12000, 'Start audio notifications');
+    log('Audio notifications started');
 
     audioChar.addEventListener('characteristicvaluechanged', handleAudioFrame);
     battChar.addEventListener('characteristicvaluechanged', handleBattery);

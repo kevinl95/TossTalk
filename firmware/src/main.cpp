@@ -33,6 +33,7 @@ uint32_t lastAudioTickMs = 0;
 uint32_t seq = 0;
 
 bool bleClientConnected = false;
+uint32_t bleConnectedAtMs = 0;
 bool micAvailable = false;
 
 static constexpr uint16_t AUDIO_SAMPLE_RATE = 8000;
@@ -76,7 +77,10 @@ bool lastCharging = false;
 void notifyGateState();
 
 bool canNotify(NimBLECharacteristic* ch) {
-  return bleClientConnected && ch != nullptr && ch->getSubscribedCount() > 0;
+  (void)ch;
+  // Give central time to finish service/characteristic discovery + CCCD setup.
+  // Some browser/adapter combinations may not report subscribed count reliably.
+  return bleClientConnected && (millis() - bleConnectedAtMs >= 2500);
 }
 
 const char* gateStateName(GateState s) {
@@ -108,11 +112,13 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer) {
     (void)pServer;
     bleClientConnected = true;
+    bleConnectedAtMs = millis();
     drawRuntimeStatus();
   }
 
   void onDisconnect(NimBLEServer* pServer) {
     bleClientConnected = false;
+    bleConnectedAtMs = 0;
     drawRuntimeStatus();
     pServer->startAdvertising();
   }
