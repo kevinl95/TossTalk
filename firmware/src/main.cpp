@@ -65,6 +65,7 @@ NimBLECharacteristic* controlChar = nullptr;
 GateState gateState          = GateState::UnmutedLive;
 uint32_t  lockoutStartMs     = 0;
 uint32_t  reacquireStartMs   = 0;
+uint32_t  airborneStartMs    = 0;
 uint32_t  lastBatteryTickMs  = 0;
 uint32_t  lastBatteryNotifyMs = 0;
 uint32_t  lastAudioTickMs    = 0;
@@ -237,16 +238,27 @@ void notifyGateState() {
 void updateGateState() {
   const uint32_t now = millis();
   const float mag = readAccelMagnitudeG();
-  constexpr float AIRBORNE_G    = 0.35f;
-  constexpr float IMPACT_G      = 2.20f;
-  constexpr uint32_t LOCKOUT_MS = 120;
-  constexpr uint32_t REACQ_MS   = 150;
+  constexpr float AIRBORNE_G      = 0.35f;
+  constexpr float IMPACT_G        = 2.20f;
+  constexpr float STATIONARY_LO_G = 0.7f;   // near 1g = at rest in someone's hand
+  constexpr float STATIONARY_HI_G = 1.4f;
+  constexpr uint32_t LOCKOUT_MS   = 120;
+  constexpr uint32_t REACQ_MS     = 150;
+  constexpr uint32_t AIRBORNE_TIMEOUT_MS = 500;  // max time in airborne before auto-recover
   GateState prev = gateState;
   switch (gateState) {
     case GateState::UnmutedLive:
-      if (mag < AIRBORNE_G) gateState = GateState::AirborneSuppressed; break;
+      if (mag < AIRBORNE_G) { gateState = GateState::AirborneSuppressed; airborneStartMs = now; } break;
     case GateState::AirborneSuppressed:
-      if (mag > IMPACT_G) { gateState = GateState::ImpactLockout; lockoutStartMs = now; } break;
+      if (mag > IMPACT_G) {
+        gateState = GateState::ImpactLockout; lockoutStartMs = now;
+      } else if (now - airborneStartMs >= AIRBORNE_TIMEOUT_MS &&
+                 mag >= STATIONARY_LO_G && mag <= STATIONARY_HI_G) {
+        // Gentle catch or placed down — no impact detected but device is
+        // clearly stationary (near 1g).  Skip lockout, go straight to live.
+        gateState = GateState::UnmutedLive;
+      }
+      break;
     case GateState::ImpactLockout:
       if (now - lockoutStartMs >= LOCKOUT_MS) { gateState = GateState::Reacquire; reacquireStartMs = now; } break;
     case GateState::Reacquire:
