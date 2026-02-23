@@ -1,10 +1,10 @@
 {
-  "name": "TossTalk Console",
+  "name": "TossTalk",
   "short_name": "TossTalk",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#0b1020",
-  "theme_color": "#111827",
-  "description": "Desktop Chromium console for TossTalk classroom throwable mic.",
+  "background_color": "#eef2ff",
+  "theme_color": "#4f46e5",
+  "description": "Tossable classroom microphone — connect, toss, and talk!",
   "icons": []
 }

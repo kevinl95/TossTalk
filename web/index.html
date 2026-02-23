@@ -3,89 +3,297 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#111827" />
+    <meta name="theme-color" content="#4f46e5" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>TossTalk</title>
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      :root {
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --primary: #4f46e5;
+        --primary-light: #818cf8;
+        --primary-dark: #3730a3;
+        --success: #10b981;
+        --warning: #f59e0b;
+        --danger: #ef4444;
+        --text: #1e293b;
+        --text-muted: #64748b;
+        --border: #e2e8f0;
+        --radius: 16px;
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        color-scheme: light;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 50%, #dbeafe 100%);
+        min-height: 100vh;
+        color: var(--text);
+      }
+
+      .app {
+        max-width: 520px;
+        margin: 0 auto;
+        padding: 24px 16px 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 20px;
+      }
+
+      /* ── Header ─────────────────────────────────────── */
+      .header {
+        text-align: center;
+        padding-top: 12px;
+      }
+      .header h1 {
+        font-size: 2.2rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, var(--primary), #06b6d4);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+      .header p {
+        color: var(--text-muted);
+        font-size: 0.95rem;
+        margin-top: 4px;
+      }
+
+      /* ── Cards ──────────────────────────────────────── */
+      .card {
+        width: 100%;
+        background: var(--card);
+        border-radius: var(--radius);
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04);
+        border: 1px solid var(--border);
+      }
+
+      /* ── Big connect button ─────────────────────────── */
+      .connect-btn {
+        width: 100%;
+        padding: 16px;
+        font-size: 1.2rem;
+        font-weight: 700;
+        border: none;
+        border-radius: 12px;
+        color: white;
+        background: linear-gradient(135deg, var(--primary), var(--primary-light));
+        cursor: pointer;
+        transition: transform 0.15s, box-shadow 0.15s;
+        box-shadow: 0 4px 14px rgba(79,70,229,0.35);
+      }
+      .connect-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(79,70,229,0.45); }
+      .connect-btn:active { transform: scale(0.98); }
+      .connect-btn.connected {
+        background: linear-gradient(135deg, var(--success), #34d399);
+        box-shadow: 0 4px 14px rgba(16,185,129,0.35);
+      }
+
+      /* ── Status strip ───────────────────────────────── */
+      .status-strip {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.9rem;
+        color: var(--text-muted);
+      }
+      .status-dot {
+        width: 10px; height: 10px;
+        border-radius: 50%;
+        background: #cbd5e1;
+        transition: background 0.3s;
+      }
+      .status-dot.live { background: var(--success); animation: pulse 1.5s infinite; }
+      .status-dot.connecting { background: var(--warning); animation: pulse 0.8s infinite; }
+      .status-dot.error { background: var(--danger); }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+
+      /* ── Volume meter ───────────────────────────────── */
+      .volume-section { text-align: center; }
+      .volume-section h2 {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        margin-bottom: 12px;
+      }
+      .volume-ring {
+        width: 160px; height: 160px;
+        margin: 0 auto;
+        position: relative;
+      }
+      .volume-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+      .volume-ring .track { fill: none; stroke: #e2e8f0; stroke-width: 10; }
+      .volume-ring .bar {
+        fill: none;
+        stroke: var(--primary-light);
+        stroke-width: 10;
+        stroke-linecap: round;
+        stroke-dasharray: 408;
+        stroke-dashoffset: 408;
+        transition: stroke-dashoffset 0.08s linear, stroke 0.3s;
+      }
+      .volume-ring .bar.hot { stroke: var(--danger); }
+      .volume-ring .bar.warm { stroke: var(--warning); }
+      .volume-ring .bar.good { stroke: var(--success); }
+      .volume-ring .bar.quiet { stroke: var(--primary-light); }
+      .volume-label {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      .volume-label .icon { font-size: 2rem; }
+      .volume-label .desc { font-size: 0.85rem; font-weight: 600; color: var(--text); margin-top: 2px; }
+
+      /* ── Gate / Battery row ─────────────────────────── */
+      .info-row {
+        display: flex;
+        gap: 12px;
+        width: 100%;
+      }
+      .info-row .card {
+        flex: 1;
+        text-align: center;
+        padding: 14px;
+      }
+      .info-row .label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+      }
+      .info-row .value {
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+      .info-row .value.muted-state { color: var(--warning); }
+      .info-row .value.live-state { color: var(--success); }
+
+      /* ── Flash section ──────────────────────────────── */
+      .flash-section { width: 100%; }
+      .flash-section summary {
+        cursor: pointer;
+        font-weight: 600;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        padding: 4px 0;
+        list-style: none;
+      }
+      .flash-section summary::before { content: '⚡ '; }
+      .flash-section .flash-body {
+        margin-top: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .flash-btn {
+        padding: 12px;
+        font-size: 1rem;
+        font-weight: 600;
+        border: 2px solid var(--primary);
+        border-radius: 10px;
+        background: transparent;
+        color: var(--primary);
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+      .flash-btn:hover { background: var(--primary); color: white; }
+
+      .flash-progress {
+        width: 100%;
+        height: 8px;
+        border-radius: 4px;
+        appearance: none;
+        -webkit-appearance: none;
+        background: var(--border);
+      }
+      .flash-progress::-webkit-progress-bar { background: var(--border); border-radius: 4px; }
+      .flash-progress::-webkit-progress-value { background: var(--primary); border-radius: 4px; transition: width 0.2s; }
+      .flash-progress::-moz-progress-bar { background: var(--primary); border-radius: 4px; }
+
+      .flash-status {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        text-align: center;
+      }
+
+      /* ── Footer ─────────────────────────────────────── */
+      .footer {
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        text-align: center;
+      }
+      .footer a { color: var(--primary); text-decoration: none; }
+      .footer a:hover { text-decoration: underline; }
+    </style>
   </head>
   <body>
     <main class="app">
-      <h1>TossTalk</h1>
-      <p class="sub">Tossable Microphone Control</p>
+      <div class="header">
+        <h1>🎤 TossTalk</h1>
+        <p>Tossable Classroom Microphone</p>
+      </div>
 
-      <section class="panel">
-        <button id="connectBtn">Connect TossTalk</button>
-        <button id="flashBtn">Flash Firmware</button>
-      </section>
+      <button id="connectBtn" class="connect-btn">Connect Microphone</button>
 
-      <section class="panel grid">
-        <div>
-          <h2>Connection</h2>
-          <p id="connState">Disconnected</p>
-        </div>
-        <div>
-          <h2>Audio Gate</h2>
-          <p id="gateState">Unknown</p>
-        </div>
-        <div>
-          <h2>Battery</h2>
-          <p id="battery">--%</p>
-        </div>
-      </section>
+      <div class="status-strip">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="connState">Not connected</span>
+      </div>
 
-      <section class="panel grid">
-        <div>
-          <h2>Frames</h2>
-          <p id="frameCount">0</p>
+      <div class="card volume-section" id="volumeCard" style="display:none">
+        <h2>Live Volume</h2>
+        <div class="volume-ring">
+          <svg viewBox="0 0 140 140">
+            <circle class="track" cx="70" cy="70" r="65"/>
+            <circle id="volBar" class="bar good" cx="70" cy="70" r="65"/>
+          </svg>
+          <div class="volume-label">
+            <span class="icon" id="volIcon">🔇</span>
+            <span class="desc" id="volDesc">Waiting…</span>
+          </div>
         </div>
-        <div>
-          <h2>Dropped</h2>
-          <p id="dropCount">0</p>
-        </div>
-        <div>
-          <h2>Muted Frames</h2>
-          <p id="mutedCount">0</p>
-        </div>
-        <div>
-          <h2>Concealed</h2>
-          <p id="concealedCount">0</p>
-        </div>
-        <div>
-          <h2>Buffer Depth</h2>
-          <p id="bufferDepth">0</p>
-        </div>
-      </section>
+      </div>
 
-      <section class="panel">
-        <h2>Flashing</h2>
-        <p class="sub">Chromium desktop only. Use either a hosted merged firmware binary URL or choose a local .bin file.</p>
-        <div class="flash-grid">
-          <label>
-            Firmware URL
-            <input id="firmwareUrl" type="text" value="./firmware/tosstalk-merged.bin" placeholder="./firmware/tosstalk-merged.bin" />
-          </label>
-          <label>
-            Firmware File
-            <input id="firmwareFile" type="file" accept=".bin,application/octet-stream" />
-          </label>
-          <label>
-            Flash Address
-            <input id="flashAddress" type="text" value="0x0" />
-          </label>
-          <label class="checkline">
-            <input id="eraseAll" type="checkbox" />
-            Erase full flash first
-          </label>
+      <div class="info-row">
+        <div class="card">
+          <div class="label">Mic Status</div>
+          <div class="value live-state" id="gateState">—</div>
         </div>
-        <progress id="flashProgress" max="100" value="0"></progress>
-        <p id="flashStatus" class="sub">Idle</p>
-      </section>
+        <div class="card">
+          <div class="label">Battery</div>
+          <div class="value" id="battery">—</div>
+        </div>
+      </div>
 
-      <section class="panel">
-        <h2>Logs</h2>
-        <pre id="logs"></pre>
-      </section>
+      <details class="flash-section card">
+        <summary>Update Firmware</summary>
+        <div class="flash-body">
+          <p style="font-size:0.85rem; color:var(--text-muted)">
+            Plug in the TossTalk via USB and click below to install the latest firmware.
+          </p>
+          <button id="flashBtn" class="flash-btn">Flash Firmware</button>
+          <progress id="flashProgress" class="flash-progress" max="100" value="0"></progress>
+          <div id="flashStatus" class="flash-status">Ready</div>
+        </div>
+      </details>
+
+      <div class="footer">
+        <a href="./debug/">Developer Console</a>
+      </div>
     </main>
 
     <script src="./app.js" type="module"></script>
