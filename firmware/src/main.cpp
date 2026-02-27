@@ -281,9 +281,11 @@ void updateBattery() {
   const int32_t raw  = static_cast<int32_t>(M5.Power.getBatteryLevel());
   const bool    chrg = M5.Power.isCharging();
 
-  // EMA: α ≈ 0.10  →  smoothed = (raw*10 + prev*90) / 100
+  // EMA: α ≈ 0.10  →  smoothed = (raw*1000 + prev*90) / 100
+  // raw is 0-100, smoothBattX100 is in ×100 scale (0-10000).
+  // raw must be scaled to ×100 first: raw*100*10 = raw*1000.
   if (smoothBattX100 < 0) smoothBattX100 = raw * 100;           // seed on first read
-  smoothBattX100 = (raw * 10 + smoothBattX100 * 90) / 100;
+  smoothBattX100 = (raw * 1000 + smoothBattX100 * 90) / 100;
   const uint8_t pct = static_cast<uint8_t>((smoothBattX100 + 50) / 100);  // round
 
   drawBatteryHud(pct, chrg);
