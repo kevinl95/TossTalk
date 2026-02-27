@@ -124,6 +124,7 @@ static const int kStepTable[89] = {
 
 uint8_t lastBatteryPercent = 0;
 bool    lastCharging       = false;
+int32_t smoothBattX100     = -1;   // EMA accumulator ×100, -1 = uninitialised
 
 // ── Forward declarations ─────────────────────────────────────────────────
 void notifyGateState();
@@ -277,8 +278,14 @@ void updateBattery() {
   const uint32_t now = millis();
   if (now - lastBatteryTickMs < 1000) return;
   lastBatteryTickMs = now;
-  const uint8_t pct  = M5.Power.getBatteryLevel();
+  const int32_t raw  = static_cast<int32_t>(M5.Power.getBatteryLevel());
   const bool    chrg = M5.Power.isCharging();
+
+  // EMA: α ≈ 0.10  →  smoothed = (raw*10 + prev*90) / 100
+  if (smoothBattX100 < 0) smoothBattX100 = raw * 100;           // seed on first read
+  smoothBattX100 = (raw * 10 + smoothBattX100 * 90) / 100;
+  const uint8_t pct = static_cast<uint8_t>((smoothBattX100 + 50) / 100);  // round
+
   drawBatteryHud(pct, chrg);
   if (pct != lastBatteryPercent || chrg != lastCharging || (now - lastBatteryNotifyMs) >= 10000) {
     lastBatteryNotifyMs = now;

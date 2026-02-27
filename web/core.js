@@ -286,10 +286,15 @@ function handleAudioSubPacket(event) {
 }
 
 // ── Battery / State handlers ─────────────────────────────────────────────
+let smoothBatt = -1;  // web-side EMA for extra jitter suppression
 function handleBattery(event) {
   const dv = event.target.value;
   if (!dv || dv.byteLength < 2) return;
-  emit('battery', dv.getUint8(0), dv.getUint8(1) === 1);
+  const raw = dv.getUint8(0), charging = dv.getUint8(1) === 1;
+  if (smoothBatt < 0) smoothBatt = raw;
+  else smoothBatt = raw * 0.3 + smoothBatt * 0.7;
+  const pct = Math.round(smoothBatt);
+  emit('battery', pct, charging);
 }
 
 const GATE_NAMES = ['UnmutedLive','AirborneSuppressed','ImpactLockout','Reacquire'];
@@ -326,6 +331,7 @@ export async function connectBle() {
         emit('connection', 'Disconnected');
         emit('log', 'BLE disconnected');
         lastGateName = '';
+        smoothBatt = -1;
         resetAudioPipeline();
         clearNoAudioMonitor();
         if (!isConnecting) scheduleReconnect();
