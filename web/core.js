@@ -11,7 +11,7 @@ const STATE_CHAR_UUID = '9f8d0004-6b7b-4f26-b10f-3aa861aa0001';
 const SAMPLE_RATE   = 8000;
 const SAMPLE_COUNT  = 160;
 const FRAME_MS      = 20;
-const TARGET_BUFFER = 2;
+const TARGET_BUFFER = 4;
 const MAX_BUFFER    = 24;
 const MAX_CONCEAL   = 2;
 
@@ -108,11 +108,11 @@ function startNoAudioMonitor() {
 
 // ── Audio engine ─────────────────────────────────────────────────────────
 function ensureAudio() {
-  if (!audioCtx) { audioCtx = new AudioContext({ sampleRate: 48000 }); scheduleAt = audioCtx.currentTime; }
+  if (!audioCtx) audioCtx = new AudioContext({ sampleRate: 48000 });
+  if (audioCtx.state === 'suspended') audioCtx.resume();
 }
 
 function playPcm(rate, int16) {
-  ensureAudio();
   const f = new Float32Array(int16.length);
   for (let i = 0; i < int16.length; i++) f[i] = int16[i] / 32768;
   const buf = audioCtx.createBuffer(1, f.length, rate);
@@ -121,8 +121,6 @@ function playPcm(rate, int16) {
   src.buffer = buf;
   src.connect(audioCtx.destination);
   src.onended = () => { try { src.disconnect(); } catch {} };
-  const now = audioCtx.currentTime;
-  if (scheduleAt < now) scheduleAt = now;
   src.start(scheduleAt);
   scheduleAt += buf.duration;
 }
@@ -156,31 +154,37 @@ function ensurePlayoutLoop() {
       scheduleAt = audioCtx.currentTime;
     }
 
-    // Drift correction: trim buffer to TARGET_BUFFER + 2 at most.
-    // Shedding excess frames keeps steady-state latency tight.
-    while (jitterQueue.length > TARGET_BUFFER + 2) {
+    const now = audioCtx.currentTime;
+
+    // If the scheduled audio has already played out (underrun), snap
+    // forward.  This accepts a brief silence gap rather than filling
+    // the look-ahead with concealment frames — concealment pushes
+    // scheduleAt into the future, which delays real frames when they
+    // arrive and causes the buffer to grow, triggering drift drops
+    // that lose syllables.
+    if (scheduleAt < now) scheduleAt = now;
+
+    // Gradual drift correction: shed at most 1 excess frame per tick.
+    // The higher ceiling (8 frames / 160 ms) absorbs BLE bursts that
+    // a tighter threshold would discard.
+    if (jitterQueue.length > TARGET_BUFFER + 4) {
       jitterQueue.shift();
       stats.drops++;
     }
 
-    // Clock-driven consumption: schedule frames until we have LEAD_S of
-    // audio queued in Web Audio.  This decouples consumption rate from
-    // setInterval jitter — the hardware audio clock drives the pace.
-    const LEAD_S = 0.04;  // 40ms look-ahead (2 frames)
-    const now = audioCtx.currentTime;
-    while (scheduleAt < now + LEAD_S) {
-      let frame = jitterQueue.shift();
-      if (!frame) {
-        frame = makeConceal(SAMPLE_COUNT);
-        stats.concealedFrames++;
-      } else {
-        lastGoodFrame = frame;
-      }
+    // Clock-driven consumption: schedule only real frames from the
+    // queue until the look-ahead horizon.  Never fill with concealment
+    // — that inflates latency and triggers the drop cascade above.
+    const LEAD_S = 0.12;  // 120 ms look-ahead (6 frames)
+    while (jitterQueue.length > 0 && scheduleAt < now + LEAD_S) {
+      const frame = jitterQueue.shift();
+      lastGoodFrame = frame;
       playPcm(SAMPLE_RATE, frame);
       emit('audio', frame);
     }
+
     emit('stats');
-  }, FRAME_MS);
+  }, 10);
 }
 
 // ── IMA ADPCM decoder ───────────────────────────────────────────────────
