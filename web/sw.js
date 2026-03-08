@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tosstalk-v14';
+const CACHE_NAME = 'tosstalk-v15';
 const ASSETS = [
   './',
   './index.html',
@@ -24,16 +24,25 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Network-first strategy: always try the network so users get the latest
+// code.  Fall back to the pre-cached copy only when offline or on error.
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return (
-        cached ||
-        fetch(event.request).catch(() => {
-          if (event.request.mode === 'navigate') return caches.match('./index.html');
-          return new Response('', { status: 404 });
-        })
-      );
-    })
+    fetch(event.request)
+      .then((response) => {
+        // Update the cache with the fresh response for offline use
+        if (response.ok && event.request.method === 'GET') {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cached) => {
+          return cached || (event.request.mode === 'navigate'
+            ? caches.match('./index.html')
+            : new Response('', { status: 404 }));
+        });
+      })
   );
 });
