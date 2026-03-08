@@ -155,19 +155,30 @@ function ensurePlayoutLoop() {
       playoutStarted = true;
       scheduleAt = audioCtx.currentTime;
     }
-    // Drift correction: if buffer is growing, consume an extra frame to
-    // prevent latency from creeping up.  This drops 1 frame (~20ms) when
-    // the buffer exceeds TARGET_BUFFER + 3, keeping steady-state latency
-    // close to the target.
-    if (jitterQueue.length > TARGET_BUFFER + 3) {
-      jitterQueue.shift();  // discard oldest frame
+
+    // Drift correction: trim buffer to TARGET_BUFFER + 2 at most.
+    // Shedding excess frames keeps steady-state latency tight.
+    while (jitterQueue.length > TARGET_BUFFER + 2) {
+      jitterQueue.shift();
       stats.drops++;
     }
-    let frame = jitterQueue.shift();
-    if (!frame) { frame = makeConceal(SAMPLE_COUNT); stats.concealedFrames++; }
-    else { lastGoodFrame = frame; }
-    playPcm(SAMPLE_RATE, frame);
-    emit('audio', frame);
+
+    // Clock-driven consumption: schedule frames until we have LEAD_S of
+    // audio queued in Web Audio.  This decouples consumption rate from
+    // setInterval jitter — the hardware audio clock drives the pace.
+    const LEAD_S = 0.04;  // 40ms look-ahead (2 frames)
+    const now = audioCtx.currentTime;
+    while (scheduleAt < now + LEAD_S) {
+      let frame = jitterQueue.shift();
+      if (!frame) {
+        frame = makeConceal(SAMPLE_COUNT);
+        stats.concealedFrames++;
+      } else {
+        lastGoodFrame = frame;
+      }
+      playPcm(SAMPLE_RATE, frame);
+      emit('audio', frame);
+    }
     emit('stats');
   }, FRAME_MS);
 }

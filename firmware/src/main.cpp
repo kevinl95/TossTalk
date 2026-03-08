@@ -614,8 +614,8 @@ void loop() {
   if (bleClientConnected && !connParamsUpdated) {
     connParamsUpdated = true;
     struct ble_gap_upd_params params = {};
-    params.itvl_min = 12;             // 15.0 ms  (units of 1.25 ms)
-    params.itvl_max = 16;             // 20.0 ms
+    params.itvl_min = 8;              // 10.0 ms  (units of 1.25 ms)
+    params.itvl_max = 24;             // 30.0 ms
     params.latency  = 0;
     params.supervision_timeout = 400; // 4 s
     int rc = ble_gap_update_params(bleConnHandle, &params);
