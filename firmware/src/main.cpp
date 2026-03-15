@@ -29,6 +29,7 @@
 
 #include <M5Unified.h>
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 #include <cmath>
 
 // Forward-declare the NimBLE C function we need for setting a random address.
@@ -78,6 +79,12 @@ bool     firstAudioSent     = false;
 bool     connParamsUpdated  = false;
 bool     micAvailable       = false;
 volatile bool displayDirty  = false;  // set in BLE callbacks, drawn in loop()
+Preferences prefs;
+
+// Persisted random-static BLE address for user-friendly reconnect behavior.
+// A stable MAC across reboots means OS/browser can reconnect reliably
+// without "new device" prompts each power cycle.
+uint8_t   bleAddrRnd[6]     = {0};
 
 // Diagnostic counters
 uint32_t dbgNotifyOk    = 0;
@@ -129,6 +136,7 @@ int32_t smoothBattX100     = -1;   // EMA accumulator ×100, -1 = uninitialised
 // ── Forward declarations ─────────────────────────────────────────────────
 void notifyGateState();
 void drawRuntimeStatus();
+void resetAudioTxState();
 
 // ── Notification warmup guard ────────────────────────────────────────────
 bool canNotify() {
@@ -197,6 +205,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     bleConnectedAtMs   = millis();
     bleConnHandle      = desc->conn_handle;
     firstAudioSent     = false;
+    resetAudioTxState();
     displayDirty       = true;  // draw from loop(), never SPI in BLE callback
     Serial.printf("[BLE] Connected handle=%u\n", bleConnHandle);
   }
@@ -206,10 +215,19 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     bleConnHandle      = 0xFFFF;
     firstAudioSent     = false;
     connParamsUpdated  = false;
+    resetAudioTxState();
     displayDirty       = true;
     Serial.println("[BLE] Disconnected");
-    // Restart advertising so the device is discoverable again.
-    NimBLEDevice::getAdvertising()->start();
+    // Restart advertising robustly so reconnect is always possible.
+    auto* adv = NimBLEDevice::getAdvertising();
+    if (adv) {
+      adv->stop();
+      bool ok = adv->start();
+      if (!ok) {
+        delay(20);
+        adv->start();
+      }
+    }
   }
 };
 
@@ -356,6 +374,13 @@ uint8_t  txMutedBit  = 0;
 uint8_t  txFrameSeq  = 0;
 uint8_t  txSubNext   = TOTAL_SUB;  // TOTAL_SUB = idle (no frame pending)
 uint32_t txLastSubMs = 0;
+
+void resetAudioTxState() {
+  consecFail = 0;
+  txSubNext = TOTAL_SUB;
+  txLastSubMs = 0;
+  lastAudioTickMs = 0;
+}
 
 void encodeNewFrame() {
   queueMicCapture();
@@ -514,26 +539,37 @@ void setupBle() {
   NimBLEDevice::init(DEVICE_NAME);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-  // ── Generate a NEW random-static address on every boot ──────────────────
-  // Windows/Edge caches the GATT attribute table keyed by MAC address.
-  // The Forget button in chrome://bluetooth-internals is broken, so the
-  // only reliable way to force a fresh GATT discovery is to present a
-  // MAC address that Windows has never seen.  We generate a truly random
-  // one on every power cycle using esp_random() (hardware RNG).
+  // ── Use a persisted random-static address (stable across reboots) ───────
+  // This keeps reconnect/repair behavior consistent for non-technical users
+  // while still avoiding public MAC tracking.
   {
-    uint8_t rnd[6];
-    // esp_random() returns 32 bits of hardware-RNG entropy
-    uint32_t r0 = esp_random(), r1 = esp_random();
-    memcpy(rnd, &r0, 4);
-    memcpy(rnd + 4, &r1, 2);
-    rnd[5] = (rnd[5] & 0x3F) | 0xC0;  // top 2 bits = 11 → random static
-    // Ensure random part isn't all-ones or all-zeros (BT spec requirement)
-    if ((rnd[0] | rnd[1] | rnd[2] | rnd[3] | rnd[4] | (rnd[5] & 0x3F)) == 0)
-      rnd[0] = 0x01;
-    ble_hs_id_set_rnd(rnd);
+    bool haveSaved = false;
+    if (prefs.begin("tosstalk", true)) {
+      size_t got = prefs.getBytes("ble_addr", bleAddrRnd, sizeof(bleAddrRnd));
+      haveSaved = (got == sizeof(bleAddrRnd));
+      prefs.end();
+    }
+
+    if (!haveSaved) {
+      uint32_t r0 = esp_random(), r1 = esp_random();
+      memcpy(bleAddrRnd, &r0, 4);
+      memcpy(bleAddrRnd + 4, &r1, 2);
+      bleAddrRnd[5] = (bleAddrRnd[5] & 0x3F) | 0xC0;  // random static type
+      if ((bleAddrRnd[0] | bleAddrRnd[1] | bleAddrRnd[2] |
+           bleAddrRnd[3] | bleAddrRnd[4] | (bleAddrRnd[5] & 0x3F)) == 0) {
+        bleAddrRnd[0] = 0x01;
+      }
+      if (prefs.begin("tosstalk", false)) {
+        prefs.putBytes("ble_addr", bleAddrRnd, sizeof(bleAddrRnd));
+        prefs.end();
+      }
+    }
+
+    ble_hs_id_set_rnd(bleAddrRnd);
     NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM);
-    Serial.printf("[BLE] Random MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                  rnd[5], rnd[4], rnd[3], rnd[2], rnd[1], rnd[0]);
+    Serial.printf("[BLE] Persisted random MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  bleAddrRnd[5], bleAddrRnd[4], bleAddrRnd[3],
+                  bleAddrRnd[2], bleAddrRnd[1], bleAddrRnd[0]);
   }
 
   // Delete all stored bonds so the ESP32 side is clean too.
@@ -561,6 +597,8 @@ void setupBle() {
   auto* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(SERVICE_UUID);
   adv->setScanResponse(true);
+  adv->setMinInterval(160);  // 100 ms
+  adv->setMaxInterval(320);  // 200 ms
   adv->start();
 }
 
