@@ -1,5 +1,5 @@
 // TossTalk – debug console (wired to shared core.js)
-import { connectBle, flashFirmware, on, stats, DEFAULT_FW_URL, jitterQueue } from '../core.js';
+import { connectBle, flashFirmware, on, stats, DEFAULT_FW_URL, FIRMWARE_URLS, jitterQueue } from '../core.js';
 
 // ── DOM elements ─────────────────────────────────────────────────────────
 const connectBtn       = document.getElementById('connectBtn');
@@ -7,6 +7,7 @@ const flashBtn         = document.getElementById('flashBtn');
 const connState        = document.getElementById('connState');
 const gateStateEl      = document.getElementById('gateState');
 const batteryEl        = document.getElementById('battery');
+const fwBoardIn        = document.getElementById('fwBoard');
 const firmwareUrlIn    = document.getElementById('firmwareUrl');
 const firmwareFileIn   = document.getElementById('firmwareFile');
 const flashAddressIn   = document.getElementById('flashAddress');
@@ -70,5 +71,16 @@ function parseAddr(v) {
   return s.startsWith('0x') ? parseInt(s.slice(2), 16) : parseInt(s, 10);
 }
 
+function selectedFirmwareUrl() {
+  const board = fwBoardIn?.value || 'm5stick-c-plus2';
+  return FIRMWARE_URLS[board] || DEFAULT_FW_URL;
+}
+
 updateStatsUi();
-firmwareUrlIn.value = DEFAULT_FW_URL;
+firmwareUrlIn.value = selectedFirmwareUrl();
+
+if (fwBoardIn) {
+  fwBoardIn.addEventListener('change', () => {
+    firmwareUrlIn.value = selectedFirmwareUrl();
+  });
+}

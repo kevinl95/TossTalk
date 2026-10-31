@@ -285,6 +285,13 @@
           <p style="font-size:0.85rem; color:var(--text-muted)">
             Plug in the TossTalk via USB and click below to install the latest firmware.
           </p>
+          <label style="font-size:0.85rem; color:var(--text-muted); display:flex; flex-direction:column; gap:6px;">
+            Board
+            <select id="fwBoard" style="padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:0.9rem; color:var(--text); background:white;">
+              <option value="m5stick-c-plus2">M5StickC Plus2</option>
+              <option value="m5stick-s3">M5StickS3</option>
+            </select>
+          </label>
           <button id="flashBtn" class="flash-btn">Flash Firmware</button>
           <progress id="flashProgress" class="flash-progress" max="100" value="0"></progress>
           <div id="flashStatus" class="flash-status">Ready</div>

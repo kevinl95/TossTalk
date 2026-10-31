@@ -32,6 +32,10 @@ const ESPTOOL_URLS = [
   'https://esm.sh/esptool-js@0.5.6',
   'https://cdn.skypack.dev/esptool-js@0.5.6',
 ];
+const FIRMWARE_URLS = {
+  'm5stick-c-plus2': new URL('./firmware/tosstalk-plus2-merged.bin', import.meta.url).href,
+  'm5stick-s3': new URL('./firmware/tosstalk-s3-merged.bin', import.meta.url).href,
+};
 const DEFAULT_FW_URL = new URL('./firmware/tosstalk-merged.bin', import.meta.url).href;
 
 // ── Shared state ─────────────────────────────────────────────────────────
@@ -599,4 +603,4 @@ export async function flashFirmware({ firmwareUrl, firmwareFile, flashAddress = 
   }
 }
 
-export { DEFAULT_FW_URL, jitterQueue, SAMPLE_COUNT };
+export { DEFAULT_FW_URL, FIRMWARE_URLS, jitterQueue, SAMPLE_COUNT };

@@ -1,5 +1,5 @@
 // TossTalk – main UI
-import { connectBle, flashFirmware, on, stats, DEFAULT_FW_URL } from './core.js';
+import { connectBle, flashFirmware, on, stats, DEFAULT_FW_URL, FIRMWARE_URLS } from './core.js';
 
 // ── DOM refs ─────────────────────────────────────────────────────────────
 const connectBtn   = document.getElementById('connectBtn');
@@ -11,6 +11,7 @@ const volIcon      = document.getElementById('volIcon');
 const volDesc      = document.getElementById('volDesc');
 const gateStateEl  = document.getElementById('gateState');
 const batteryEl    = document.getElementById('battery');
+const fwBoardEl    = document.getElementById('fwBoard');
 const flashBtn     = document.getElementById('flashBtn');
 const flashProgress = document.getElementById('flashProgress');
 const flashStatus  = document.getElementById('flashStatus');
@@ -147,13 +148,24 @@ flashBtn.addEventListener('click', async () => {
   flashBtn.disabled = true;
   flashProgress.value = 0;
   try {
-    await flashFirmware({ firmwareUrl: DEFAULT_FW_URL, eraseAll: true });
+    const board = fwBoardEl?.value || 'm5stick-c-plus2';
+    const firmwareUrl = FIRMWARE_URLS[board] || DEFAULT_FW_URL;
+    await flashFirmware({ firmwareUrl, eraseAll: true });
   } catch (e) {
     // flashStatus already shows the error; log to console for debugging
     console.error('Flash failed:', e);
   }
   flashBtn.disabled = false;
 });
+
+if (fwBoardEl) {
+  const boardName = fwBoardEl.options[fwBoardEl.selectedIndex]?.text || 'M5StickC Plus2';
+  flashStatus.textContent = `Ready (${boardName})`;
+  fwBoardEl.addEventListener('change', () => {
+    const selected = fwBoardEl.options[fwBoardEl.selectedIndex]?.text || fwBoardEl.value;
+    flashStatus.textContent = `Ready (${selected})`;
+  });
+}
 
 // ── Service worker ───────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {

@@ -61,6 +61,13 @@
         <p class="sub">Chromium desktop only. Use either a hosted merged firmware binary URL or choose a local .bin file.</p>
         <div class="flash-grid">
           <label>
+            Board
+            <select id="fwBoard">
+              <option value="m5stick-c-plus2">M5StickC Plus2</option>
+              <option value="m5stick-s3">M5StickS3</option>
+            </select>
+          </label>
+          <label>
             Firmware URL
             <input id="firmwareUrl" type="text" placeholder="firmware URL" />
           </label>
