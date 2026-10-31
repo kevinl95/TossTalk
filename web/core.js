@@ -546,6 +546,27 @@ async function loadEsptool() {
   throw new Error('Unable to load esptool-js');
 }
 
+// Reset the ESP32-S3 via its RTC watchdog (same sequence as esptool's
+// ESP32S3ROM.watchdog_reset). Unlike an RTS reset this doesn't re-sample the
+// strapping pins, so the chip boots the freshly flashed app.
+async function watchdogResetS3(loader, log) {
+  const RTC_CNTL_BASE = 0x60008000;
+  const WDTCONFIG0 = RTC_CNTL_BASE + 0x0098;
+  const WDTCONFIG1 = RTC_CNTL_BASE + 0x009c;
+  const WDTWPROTECT = RTC_CNTL_BASE + 0x00b0;
+  const WDT_WKEY = 0x50d83aa1;
+  log('Hard resetting via watchdog...');
+  try {
+    await loader.writeReg(WDTWPROTECT, WDT_WKEY);                                  // unlock
+    await loader.writeReg(WDTCONFIG1, 2000);                                      // timeout
+    await loader.writeReg(WDTCONFIG0, ((1 << 31) | (5 << 28) | (1 << 8) | 2) >>> 0); // enable, system reset
+    await loader.writeReg(WDTWPROTECT, 0);                                        // lock
+  } catch {
+    // The chip may reset before the last register write is acknowledged.
+  }
+  await new Promise(r => setTimeout(r, 500));
+}
+
 export async function flashFirmware({ firmwareUrl, firmwareFile, flashAddress = 0, eraseAll = false, logFn }) {
   const log = logFn || (m => emit('log', m));
   if (!('serial' in navigator)) { alert('Web Serial unavailable.'); return; }
@@ -593,7 +614,13 @@ export async function flashFirmware({ firmwareUrl, firmwareFile, flashAddress = 
     }
     await loader.flashFinish(false);
     emit('flashStatus', 'Rebooting...');
-    await loader.after('hard_reset');
+    if (loader.chip?.CHIP_NAME === 'ESP32-S3') {
+      // An RTS reset over the S3's USB-Serial-JTAG re-latches the boot straps
+      // and lands back in ROM download mode, so the app never starts.
+      await watchdogResetS3(loader, log);
+    } else {
+      await loader.after('hard_reset');
+    }
     emit('flashStatus', `Done ✓`);
   } catch (err) {
     emit('flashStatus', `Failed: ${formatError(err)}`);
