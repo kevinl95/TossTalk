@@ -41,6 +41,7 @@ jobs:
             --out .pio/build/m5stick-c-plus2/tosstalk-merged.bin
           python ../scripts/merge_firmware.py \
             --chip esp32s3 \
+            --flash-size 8MB \
             --env-dir .pio/build/m5stick-s3 \
             --out .pio/build/m5stick-s3/tosstalk-s3-merged.bin
 

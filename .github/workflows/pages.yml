@@ -47,6 +47,7 @@ jobs:
           cp web/firmware/tosstalk-merged.bin web/firmware/tosstalk-plus2-merged.bin
           python scripts/merge_firmware.py \
             --chip esp32s3 \
+            --flash-size 8MB \
             --env-dir firmware/.pio/build/m5stick-s3 \
             --out web/firmware/tosstalk-s3-merged.bin
 

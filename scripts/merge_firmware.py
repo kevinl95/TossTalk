@@ -25,6 +25,15 @@ def find_boot_app0() -> pathlib.Path:
     raise FileNotFoundError("boot_app0.bin not found in PlatformIO package directories")
 
 
+# The original ESP32 (and ESP32-S2) ROM loads the 2nd-stage bootloader from
+# 0x1000; newer chips (S3, C3, C6, H2, ...) load it from 0x0.
+BOOTLOADER_OFFSETS = {"esp32": 0x1000, "esp32s2": 0x1000}
+
+
+def bootloader_offset(chip: str) -> int:
+    return BOOTLOADER_OFFSETS.get(chip, 0x0)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Merge ESP32 firmware binaries into one flashable image")
     parser.add_argument("--env-dir", required=True, help="PlatformIO env output directory (contains firmware.bin)")
@@ -64,7 +73,7 @@ def main() -> int:
         args.flash_freq,
         "--flash_size",
         args.flash_size,
-        "0x1000",
+        hex(bootloader_offset(args.chip)),
         str(bootloader),
         "0x8000",
         str(partitions),
