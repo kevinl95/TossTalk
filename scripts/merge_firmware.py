@@ -32,6 +32,7 @@ def main() -> int:
     parser.add_argument("--flash-mode", default="dio")
     parser.add_argument("--flash-freq", default="40m")
     parser.add_argument("--flash-size", default="4MB")
+    parser.add_argument("--chip", default="esp32", help="esptool chip target, e.g. esp32 or esp32s3")
     args = parser.parse_args()
 
     env_dir = pathlib.Path(args.env_dir)
@@ -53,7 +54,7 @@ def main() -> int:
         "-m",
         "esptool",
         "--chip",
-        "esp32",
+        args.chip,
         "merge_bin",
         "-o",
         str(out_path),

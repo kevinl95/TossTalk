@@ -39,6 +39,10 @@ jobs:
           python ../scripts/merge_firmware.py \
             --env-dir .pio/build/m5stick-c-plus2 \
             --out .pio/build/m5stick-c-plus2/tosstalk-merged.bin
+          python ../scripts/merge_firmware.py \
+            --chip esp32s3 \
+            --env-dir .pio/build/m5stick-s3 \
+            --out .pio/build/m5stick-s3/tosstalk-s3-merged.bin
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
@@ -49,3 +53,7 @@ jobs:
             firmware/.pio/build/m5stick-c-plus2/bootloader.bin
             firmware/.pio/build/m5stick-c-plus2/partitions.bin
             firmware/.pio/build/m5stick-c-plus2/tosstalk-merged.bin
+            firmware/.pio/build/m5stick-s3/firmware.bin
+            firmware/.pio/build/m5stick-s3/bootloader.bin
+            firmware/.pio/build/m5stick-s3/partitions.bin
+            firmware/.pio/build/m5stick-s3/tosstalk-s3-merged.bin

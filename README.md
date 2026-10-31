@@ -32,6 +32,16 @@ By default, it flashes a prebuilt merged image hosted with the site:
 
 - [web/firmware/tosstalk-merged.bin](web/firmware/tosstalk-merged.bin)
 
+Side-by-side board builds are also published:
+
+- M5StickC Plus2: [web/firmware/tosstalk-plus2-merged.bin](web/firmware/tosstalk-plus2-merged.bin)
+- M5StickS3: [web/firmware/tosstalk-s3-merged.bin](web/firmware/tosstalk-s3-merged.bin)
+
+Notes:
+
+- `tosstalk-merged.bin` currently maps to the Plus2 build for backward compatibility.
+- If you are on M5StickS3, use the S3 merged binary.
+
 This file is generated automatically by GitHub Actions during deployment.
 
 ## Browser support
